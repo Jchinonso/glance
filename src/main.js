@@ -21,6 +21,7 @@ function log(...parts) {
   } catch {}
 }
 const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
+const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
 const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "fast", vocabulary: "", apiKey: null };
@@ -125,7 +126,7 @@ function state() {
     savingNotes,
     spend,
     shortcuts: shortcuts(),
-    transcript,
+    transcriptCount: transcript.length,
   };
 }
 
@@ -134,12 +135,7 @@ function broadcastState() {
 }
 
 function applyInvisible() {
-  if (!win) return;
-  win.setContentProtection(config.invisible);
-  if (process.platform === "darwin") {
-    if (config.invisible) app.dock?.hide();
-    else app.dock?.show();
-  }
+  win?.setContentProtection(config.invisible);
 }
 
 function createWindow() {
@@ -206,7 +202,7 @@ function hideWindow() {
   if (!win) return;
   win.hide();
   if (!config.hideTipShown && Notification.isSupported()) {
-    new Notification({ title: "Glance is hidden", body: "Click the Glance icon in the menu bar, or press ⌘\\, to bring it back." }).show();
+    new Notification({ title: "Glance is hidden", body: `Click the Glance icon in the menu bar, or press ${formatAccel(shortcuts().toggleWindow)}, to bring it back.` }).show();
     config.hideTipShown = true;
     saveConfig();
   }
@@ -250,7 +246,7 @@ function trayIcon() {
 let tray = null;
 function createTray() {
   tray = new Tray(trayIcon());
-  tray.setToolTip("Glance (⌘\\ to show or hide)");
+  tray.setToolTip(`Glance (${formatAccel(shortcuts().toggleWindow)} to show or hide)`);
   tray.on("click", toggleWindow);
   tray.on("right-click", () => {
     tray.popUpContextMenu(
@@ -327,6 +323,10 @@ async function runAsk(question) {
   client ??= createClient(key);
   const id = nextId++;
   const q = (question || "").trim();
+  let cancelled = false;
+  // Cancellable from the start, including while the screenshot is taken.
+  current = { id, abort: () => (cancelled = true) };
+  broadcastState();
   send("answer-start", { id, question: q });
 
   // Screenshots the user attached win; otherwise grab the screen now if enabled.
@@ -338,6 +338,12 @@ async function runAsk(question) {
     } catch (e) {
       notifyCaptureError(e, " Asking without the screen.");
     }
+  }
+
+  if (cancelled) {
+    if (current?.id === id) current = null;
+    send("answer-end", { id, aborted: true });
+    return broadcastState();
   }
 
   let text = "";
@@ -358,12 +364,12 @@ async function runAsk(question) {
   current = { id, abort: job.abort };
   broadcastState();
   try {
-    const msg = await job.done;
-    answers.push({ question: q, answer: text });
+    const { msg, problem } = await job.done;
+    if (text) answers.push({ question: q, answer: text });
     const u = msg.usage || {};
     const cost = addUsage(u);
     const tokensIn = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-    send("answer-end", { id, usage: { input: tokensIn, output: u.output_tokens || 0, cost } });
+    send("answer-end", { id, error: problem, usage: { input: tokensIn, output: u.output_tokens || 0, cost } });
   } catch (e) {
     const aborted = e?.name === "APIUserAbortError";
     if (!aborted) log("answer failed:", e);
@@ -500,7 +506,7 @@ async function toggleListening() {
       send("notice", { level: "error", text: "Microphone access denied. Enable it in System Settings > Privacy & Security." });
       return;
     }
-    listener.start();
+    if (!listener.start()) return;
     listening = true;
     listeningSince = Date.now();
   }
@@ -527,8 +533,7 @@ function createListener() {
     audioteePath: unpacked(path.join(here, "..", "node_modules", "audiotee", "bin", "audiotee")),
   });
   l.on("line", (line) => {
-    transcript.push(line);
-    if (transcript.length > 500) transcript = transcript.slice(-500);
+    transcript.push(line); // kept whole for notes; only the tail goes to Claude
     send("transcript", line);
   });
   l.on("error", (text) => send("notice", { level: "error", text }));
@@ -580,7 +585,13 @@ function registerShortcuts() {
   const moves = { Up: [0, -80], Down: [0, 80], Left: [-80, 0], Right: [80, 0] };
   for (const [key, [dx, dy]] of Object.entries(moves)) globalShortcut.register(`CommandOrControl+${key}`, () => moveBy(dx, dy));
   if (failed.length) log("shortcuts not registered:", failed.join(", "));
+  tray?.setToolTip(`Glance (${formatAccel(shortcuts().toggleWindow)} to show or hide)`);
   return failed;
+}
+
+function formatAccel(accel) {
+  const sym = { CommandOrControl: "⌘", Command: "⌘", Control: "⌃", Alt: "⌥", Shift: "⇧", Enter: "↵", Up: "↑", Down: "↓", Left: "←", Right: "→" };
+  return accel.split("+").map((k) => sym[k] || k).join("");
 }
 
 ipcMain.handle("set-shortcut", (_e, action, accel) => {
@@ -610,7 +621,7 @@ ipcMain.handle("pause-shortcuts", (_e, paused) => {
   else registerShortcuts();
 });
 
-ipcMain.handle("get-state", () => state());
+ipcMain.handle("get-state", () => ({ ...state(), transcript: transcript.slice(-TRANSCRIPT_SYNC) }));
 ipcMain.handle("ask", (_e, question) => runAsk(question));
 ipcMain.handle("cancel", () => current?.abort());
 ipcMain.handle("toggle-listening", () => toggleListening());
@@ -676,7 +687,7 @@ ipcMain.handle("hide", () => hideWindow());
 ipcMain.on("resize", (_e, height) => {
   if (!win || !Number.isFinite(height)) return;
   const [width] = win.getSize();
-  // Leave room for the settings menu, which overflows the content.
+  // The window's height follows its content.
   const h = Math.max(44, Math.min(720, Math.round(height)));
   if (win.getSize()[1] !== h) win.setSize(width, h);
 });
@@ -697,7 +708,16 @@ app.whenReady().then(() => {
   if (config.customInstructions.length >= MIN_COMPRESS_CHARS && !config.compressedInstructions) {
     compressSavedInstructions(config.customInstructions);
   }
-  registerShortcuts();
+  const failed = registerShortcuts();
+  if (failed.length) {
+    // Usually another app (Cluely, for example) holds the same keys.
+    win.webContents.once("did-finish-load", () =>
+      send("notice", {
+        level: "warn",
+        text: `${failed.map(formatAccel).join(", ")} ${failed.length === 1 ? "is" : "are"} already used by another app. Change ${failed.length === 1 ? "it" : "them"} in Settings > Keyboard.`,
+      }),
+    );
+  }
 });
 
 app.on("will-quit", () => {

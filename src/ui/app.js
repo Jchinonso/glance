@@ -1,7 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const g = window.glance;
 
-let state = { transcript: [] };
+let state = {};
+let heard = []; // transcript lines shown in this window
 let answers = []; // { id, question, text, status: "streaming" | "done" | "error", error }
 let page = -1; // index into answers, -1 when none
 let view = "answers"; // "answers" | "transcript"
@@ -114,7 +115,7 @@ function renderStrip() {
   const cloak = $("cloakBtn");
   cloak.setAttribute("aria-pressed", String(!!state.invisible));
   cloak.title = state.invisible ? "Hidden from screen sharing. Click to show it (⌘⇧H)." : "Visible in screen sharing. Click to hide it (⌘⇧H).";
-  const last = state.transcript.at(-1);
+  const last = heard.at(-1);
   $("caption").hidden = !state.listening;
   if (pendingQuestion && state.listening) {
     $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext">${escapeHtml(pendingQuestion)}</span><button type="button" class="answer-q" id="answerQBtn" title="Answer this question (⌘↵)">Answer</button>`;
@@ -133,7 +134,8 @@ function renderMenu() {
     : "Nothing spent yet";
   $("saveNotesBtn").disabled = !!state.savingNotes;
   $("saveNotesMeta").textContent = state.savingNotes ? "Writing your notes…" : "Summary, decisions, action items and full transcript, to Documents/Glance";
-  $("transcriptMeta").textContent = state.transcript?.length ? `${state.transcript.length} line${state.transcript.length === 1 ? "" : "s"} so far` : "What Glance has heard so far";
+  const n = state.transcriptCount || 0;
+  $("transcriptMeta").textContent = n ? `${n.toLocaleString()} line${n === 1 ? "" : "s"} so far` : "What Glance has heard so far";
   $("instructionsMeta").textContent = state.customInstructions?.trim() ? "on" : "off";
   $("keyMeta").textContent = state.keyHint ? `ends in ${state.keyHint}` : "not set";
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
@@ -218,7 +220,7 @@ function renderStage() {
   const busy = !!state.busy;
   $("askBtn").classList.toggle("stop", busy);
   $("askBtn").textContent = busy ? "Stop" : "Ask";
-  $("askBtn").title = busy ? "Stop this answer" : "Ask (⌘↵)";
+  $("askBtn").title = busy ? "Stop this answer" : `Ask (${plainKeys(state.shortcuts?.ask || "")})`;
 }
 
 function renderShots() {
@@ -315,7 +317,8 @@ g.on("state", (s) => {
 });
 g.on("notice", showNotice);
 g.on("transcript", (l) => {
-  state.transcript.push(l);
+  heard.push(l);
+  state.transcriptCount = (state.transcriptCount || 0) + 1;
   if (l.role === "them" && isQuestion(l.text)) pendingQuestion = l.text;
   renderStrip();
   renderTranscriptLine(l);
@@ -483,6 +486,8 @@ $("clearBtn").addEventListener("click", () => {
   g.clear();
   answers = [];
   page = -1;
+  heard = [];
+  pendingQuestion = null;
   $("transcript").querySelectorAll(".line").forEach((n) => n.remove());
   $("transcriptEmpty").hidden = false;
   setMenu(false);
@@ -593,8 +598,10 @@ for (const el of $("glass").children) sizer.observe(el);
 new MutationObserver(fit).observe($("glass"), { subtree: true, attributes: true, attributeFilter: ["hidden"] });
 
 g.getState().then((s) => {
-  state = s;
-  s.transcript.forEach(renderTranscriptLine);
+  const { transcript, ...rest } = s;
+  state = rest;
+  heard = transcript;
+  heard.forEach(renderTranscriptLine);
   render();
   $("question").focus();
 });

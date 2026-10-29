@@ -109,10 +109,14 @@ const NOISE = /^\s*(\[.*\]|\(.*\)|you|thank you\.?|thanks for watching!?|\.+)\s*
 
 // `prompt` primes Whisper with words to expect (tech terms, names), which fixes
 // most mishearings of jargon at no speed cost.
-export function whisper({ modelPath, binary, prompt }, pcm) {
-  return new Promise(async (resolve) => {
-    const file = path.join(os.tmpdir(), `glance-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
+export async function whisper({ modelPath, binary, prompt }, pcm) {
+  const file = path.join(os.tmpdir(), `glance-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
+  try {
     await writeFile(file, wav(pcm));
+  } catch (e) {
+    return { error: `couldn't write audio: ${e.message}` };
+  }
+  return new Promise((resolve) => {
     execFile(
       binary,
       ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-t", "4", ...(prompt ? ["--prompt", prompt] : [])],
@@ -127,8 +131,6 @@ export function whisper({ modelPath, binary, prompt }, pcm) {
   });
 }
 
-// Captures the mic ("me") and macOS system audio ("them"), segments speech,
-// and emits transcript lines. Transcription runs one segment at a time.
 // Apps launched from Finder don't inherit the shell PATH, so find Homebrew tools directly.
 function findBinary(name) {
   for (const dir of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
@@ -138,6 +140,8 @@ function findBinary(name) {
   return name;
 }
 
+// Captures the mic ("me") and macOS system audio ("them"), segments speech,
+// and emits transcript lines. Transcription runs one segment at a time.
 export class Listener extends EventEmitter {
   constructor({ modelPath, prompt, audioteePath, whisperBinary = findBinary("whisper-cli"), soxBinary = findBinary("rec") }) {
     super();
@@ -148,8 +152,21 @@ export class Listener extends EventEmitter {
     this.running = false;
   }
 
+  // Returns false (with one clear error) when a required tool is missing.
   start() {
-    if (this.running) return;
+    if (this.running) return true;
+    const missing = [
+      [this.soxBinary, "sox"],
+      [this.opts.binary, "whisper-cpp"],
+    ].filter(([bin]) => !path.isAbsolute(bin) || !existsSync(bin));
+    if (missing.length) {
+      this.emit("error", `Listening needs ${missing.map(([, pkg]) => pkg).join(" and ")}. Install with: brew install ${missing.map(([, pkg]) => pkg).join(" ")}`);
+      return false;
+    }
+    if (!existsSync(this.opts.modelPath)) {
+      this.emit("error", "The speech model is missing. Rebuild Glance after downloading it (see README).");
+      return false;
+    }
     this.running = true;
     this.me = new Segmenter();
     this.them = new Segmenter();
@@ -171,6 +188,7 @@ export class Listener extends EventEmitter {
     this.tee.on("data", ({ data }) => this.them.push(data));
     this.tee.on("error", (e) => this.emit("error", `System audio failed: ${e.message}`));
     this.tee.start().catch((e) => this.emit("error", `System audio failed: ${e.message}`));
+    return true;
   }
 
   // Takes effect from the next segment; no restart needed.

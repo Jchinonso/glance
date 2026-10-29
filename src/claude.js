@@ -100,11 +100,13 @@ export function ask({ client, question, transcript, previous, screenshots, effor
   });
   stream.on("text", onText);
 
+  // Resolves with the final message even on a refusal, so the caller can still
+  // count its usage; `problem` explains a refusal or a cut-off answer.
   const done = stream.finalMessage().then((msg) => {
-    if (msg.stop_reason === "refusal") {
-      throw new Error(`Claude declined this request${msg.stop_details?.category ? ` (${msg.stop_details.category})` : ""}.`);
-    }
-    return msg;
+    let problem = null;
+    if (msg.stop_reason === "refusal") problem = `Claude declined this request${msg.stop_details?.category ? ` (${msg.stop_details.category})` : ""}.`;
+    else if (msg.stop_reason === "max_tokens") problem = "The answer hit its length limit and was cut off. Ask a narrower question for the rest.";
+    return { msg, problem };
   });
   return { done, abort: () => stream.abort() };
 }

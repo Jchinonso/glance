@@ -30,3 +30,13 @@ test("ignores short blips", () => {
   seg.push(pcm(1.2, 30));
   assert.equal(count, 0);
 });
+
+test("listener refuses to start without its tools, with one clear error", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ modelPath: "/nonexistent/model.bin", whisperBinary: "whisper-cli-missing", soxBinary: "rec-missing" });
+  const errors = [];
+  l.on("error", (e) => errors.push(e));
+  assert.equal(l.start(), false);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /brew install sox whisper-cpp/);
+});
