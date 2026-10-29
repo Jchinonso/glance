@@ -19,3 +19,11 @@ test("colors keywords, calls, strings, numbers and comments", () => {
 test("escapes everything it emits", () => {
   assert.ok(!highlightCode("a < b && c > d").includes("<b"));
 });
+
+test("decrements, colors and private fields are not comments", () => {
+  for (const code of ["for (i = n; i > 0; i--) { x(); }", 'c = "#fff"; d = #fff', "this.#count = 0"]) {
+    assert.ok(!highlightCode(code).includes("tok-c"), code);
+  }
+  assert.match(highlightCode("x = 1  # set x"), /tok-c/);
+  assert.match(highlightCode("SELECT 1 -- note"), /tok-c/);
+});

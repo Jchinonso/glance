@@ -61,35 +61,6 @@ function escapeHtml(s) {
   return s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
 }
 
-// Small markdown subset: fenced code, inline code, bold, lists, paragraphs.
-function renderMarkdown(src) {
-  return src
-    .split(/```/)
-    .map((part, i) => {
-      if (i % 2 === 1) return `<pre><code>${highlightCode(part.replace(/^[\w+-]*\n/, ""))}</code></pre>`;
-      return part
-        .split(/\n{2,}/)
-        .map((block) => {
-          const inline = (t) =>
-            escapeHtml(t)
-              .replace(/`([^`]+)`/g, "<code>$1</code>")
-              .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-          const lines = block.split("\n").filter((l) => l.trim());
-          if (!lines.length) return "";
-          if (lines.length === 1 && /^#{1,6}\s/.test(lines[0])) return `<h4>${inline(lines[0].replace(/^#{1,6}\s/, ""))}</h4>`;
-          if (lines.every((l) => /^\s*[-*]\s/.test(l))) {
-            return `<ul>${lines.map((l) => `<li>${inline(l.replace(/^\s*[-*]\s/, ""))}</li>`).join("")}</ul>`;
-          }
-          if (lines.every((l) => /^\s*\d+\.\s/.test(l))) {
-            return `<ol>${lines.map((l) => `<li>${inline(l.replace(/^\s*\d+\.\s/, ""))}</li>`).join("")}</ol>`;
-          }
-          return `<p>${lines.map(inline).join("<br>")}</p>`;
-        })
-        .join("");
-    })
-    .join("");
-}
-
 function line({ role, text }) {
   const who = role === "me" ? "You" : "Them";
   return `<span class="who ${role}">${who}</span>${escapeHtml(text)}`;

@@ -180,8 +180,13 @@ export class Listener extends EventEmitter {
     this.mic = spawn(this.soxBinary, ["-q", "-c", "1", "-r", String(SAMPLE_RATE), "-b", "16", "-e", "signed-integer", "-t", "raw", "-"]);
     this.mic.stdout.on("data", (d) => this.me.push(d));
     this.mic.on("error", (e) => this.emit("error", `Mic capture failed: ${e.message}`));
-    this.mic.on("exit", (code) => {
-      if (this.running && code) this.emit("error", `Mic capture exited (${code}). Check microphone permission.`);
+    const mic = this.mic;
+    mic.on("exit", (code) => {
+      // Only this run's process matters; an old one exiting after a restart doesn't.
+      if (!this.running || this.mic !== mic) return;
+      this.emit("error", `Microphone capture stopped${code ? ` (exit ${code})` : ""}. Check the input device and microphone permission, then press Listen again.`);
+      this.stop();
+      this.emit("ended");
     });
 
     this.tee = new AudioTee({ sampleRate: SAMPLE_RATE, chunkDurationMs: 100, binaryPath: this.audioteePath });

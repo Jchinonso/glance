@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { execFileSync } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,12 +14,19 @@ const unpacked = (p) => p.replace(`app.asar${path.sep}`, `app.asar.unpacked${pat
 const configPath = path.join(app.getPath("userData"), "config.json");
 const logPath = path.join(app.getPath("logs"), "glance.log");
 
+const LOG_MAX_BYTES = 1_000_000;
+
 function log(...parts) {
   try {
     mkdirSync(path.dirname(logPath), { recursive: true });
+    // Keep one previous log; drop anything older.
+    if (existsSync(logPath) && statSync(logPath).size > LOG_MAX_BYTES) renameSync(logPath, `${logPath}.1`);
     appendFileSync(logPath, `${new Date().toISOString()} ${parts.map((p) => (p instanceof Error ? p.stack : String(p))).join(" ")}\n`);
   } catch {}
 }
+process.on("uncaughtException", (e) => log("uncaught:", e));
+process.on("unhandledRejection", (e) => log("unhandled rejection:", e));
+
 const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
@@ -238,6 +245,17 @@ function startPosition(width, workArea) {
   return { x: Math.round(workArea.x + (workArea.width - width) / 2), y: workArea.y + 24 };
 }
 
+// After a monitor is unplugged, move Glance back on-screen if it was left off.
+function keepOnScreen() {
+  if (!win || win.isDestroyed()) return;
+  const b = win.getBounds();
+  const visible = screen.getAllDisplays().some((d) => b.x + 40 > d.workArea.x && b.x < d.workArea.x + d.workArea.width - 40 && b.y >= d.workArea.y - 10 && b.y < d.workArea.y + d.workArea.height - 40);
+  if (!visible) {
+    const { workArea } = screen.getPrimaryDisplay();
+    win.setPosition(Math.round(workArea.x + (workArea.width - b.width) / 2), workArea.y + 24);
+  }
+}
+
 function toggleWindow() {
   if (!win) return;
   if (win.isVisible()) hideWindow();
@@ -302,7 +320,9 @@ function screenAccessError() {
 async function captureScreen() {
   // Don't pre-check access: Electron reports "denied" before macOS has ever
   // asked, and only the capture call itself makes macOS show the prompt.
-  const display = win ? screen.getDisplayMatching(win.getBounds()) : screen.getPrimaryDisplay();
+  // The display under the pointer is the one being worked on, which with two
+  // monitors is often not the one Glance sits on.
+  const display = screen.getDisplayNearestPoint(screen.getCursorScreenPoint());
   // Keep the overlay out of its own screenshot even when invisibility is off.
   win?.setContentProtection(true);
   try {
@@ -559,6 +579,13 @@ function createListener() {
     send("transcript", line);
   });
   l.on("error", (text) => send("notice", { level: "error", text }));
+  // Capture stopped on its own (device unplugged, permission revoked).
+  l.on("ended", () => {
+    if (!listening) return;
+    listening = false;
+    listeningSince = null;
+    broadcastState();
+  });
   return l;
 }
 
@@ -605,7 +632,11 @@ function registerShortcuts() {
   globalShortcut.unregisterAll();
   const failed = [];
   for (const [action, accel] of Object.entries(shortcuts())) {
-    if (!globalShortcut.register(accel, SHORTCUT_ACTIONS[action])) failed.push(accel);
+    try {
+      if (!globalShortcut.register(accel, SHORTCUT_ACTIONS[action])) failed.push(accel);
+    } catch {
+      failed.push(accel); // malformed accelerator, e.g. a hand-edited config
+    }
   }
   const moves = { Up: [0, -80], Down: [0, 80], Left: [-80, 0], Right: [80, 0] };
   for (const [key, [dx, dy]] of Object.entries(moves)) globalShortcut.register(`CommandOrControl+${key}`, () => moveBy(dx, dy));
@@ -734,6 +765,8 @@ app.whenReady().then(() => {
   }
   createWindow();
   createTray();
+  screen.on("display-removed", keepOnScreen);
+  screen.on("display-metrics-changed", keepOnScreen);
   // Instructions saved before auto-compression existed: compress them once now.
   if (config.customInstructions.length >= MIN_COMPRESS_CHARS && !config.compressedInstructions) {
     compressSavedInstructions(config.customInstructions);

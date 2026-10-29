@@ -371,6 +371,11 @@ body.settings-open .stage { max-height: 640px; }
 .body li { margin-bottom: 4px; }
 .body li::marker { color: var(--dim); }
 .body strong { font-weight: 700; }
+.body em { font-style: italic; }
+.body .link { text-decoration: underline; text-decoration-color: var(--faint); text-underline-offset: 2px; }
+.body table { width: 100%; margin: 0 0 12px; border-collapse: collapse; font: 13px/1.45 var(--ui); }
+.body th, .body td { padding: 6px 8px; border-bottom: 1px solid var(--edge); text-align: left; vertical-align: top; }
+.body th { color: var(--dim); font-weight: 600; }
 .body code { font: 13px var(--mono); }
 .body :not(pre) > code { background: var(--raise); padding: 1px 5px; border-radius: 5px; }
 .body pre {
@@ -499,6 +504,15 @@ input:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-h
 .ghost { flex: none; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--raise); font-weight: 600; }
 .ghost:hover { background: var(--raise-hover); }
 .ghost.danger { color: var(--alert); }
+
+/* Narrow windows: pills drop their words, keeping icon, pulse and timer. */
+.actions { flex: none; }
+.grip { overflow: hidden; }
+@media (max-width: 540px) {
+  .pill { padding: 0 10px; }
+  .pill .label { display: none !important; }
+  .listening .listen .timer { display: inline; }
+}
 
 @media (prefers-reduced-motion: reduce) {
   body.listening .rim, body.answering .rim,

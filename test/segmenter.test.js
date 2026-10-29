@@ -40,3 +40,16 @@ test("listener refuses to start without its tools, with one clear error", async 
   assert.equal(errors.length, 1);
   assert.match(errors[0], /brew install sox whisper-cpp/);
 });
+
+test("listener reports when capture dies on its own", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const here = new URL("../package.json", import.meta.url).pathname; // any existing file stands in for the model
+  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", soxBinary: "/usr/bin/false", audioteePath: "/usr/bin/true" });
+  const errors = [];
+  l.on("error", (e) => errors.push(e));
+  const ended = new Promise((resolve) => l.on("ended", resolve));
+  assert.equal(l.start(), true);
+  await ended;
+  assert.ok(errors.some((e) => /Microphone capture stopped/.test(e)), errors.join(" | "));
+  assert.equal(l.running, false);
+});
