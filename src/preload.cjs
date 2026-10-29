@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld("glance", {
   setSetting: (name, value) => ipcRenderer.invoke("set-setting", name, value),
   readClipboard: () => ipcRenderer.invoke("clipboard-read"),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard-write", text),
+  saveNotes: () => ipcRenderer.invoke("save-notes"),
+  openNotes: (file) => ipcRenderer.invoke("open-notes", file),
   addShot: () => ipcRenderer.invoke("add-shot"),
   snapAsk: (question) => ipcRenderer.invoke("snap-ask", question),
   openScreenSettings: () => ipcRenderer.invoke("open-screen-settings"),

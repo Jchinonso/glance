@@ -1,10 +1,11 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
-import { ask, compressInstructions, createClient, describeError } from "./claude.js";
+import { ask, compressInstructions, createClient, describeError, summarizeSession } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -106,6 +107,7 @@ function state() {
     hasKey: !!apiKey(),
     keyHint: apiKey() ? apiKey().slice(-4) : null,
     busy: !!current,
+    savingNotes,
     transcript,
   };
 }
@@ -224,6 +226,7 @@ function createTray() {
         { label: win?.isVisible() ? "Hide Glance" : "Show Glance", accelerator: "CommandOrControl+\\", click: toggleWindow },
         { label: listening ? "Stop listening" : "Start listening", accelerator: "CommandOrControl+Shift+\\", click: toggleListening },
         { label: "Screenshot and answer", accelerator: "CommandOrControl+Shift+2", click: () => { showWindow(); send("snap-submit"); } },
+        { label: "Save notes", enabled: !savingNotes, click: saveNotes },
         { type: "separator" },
         { label: "Quit Glance", role: "quit" },
       ]),
@@ -394,6 +397,56 @@ async function compressSavedInstructions(text) {
   }
 }
 
+// Notes go to ~/Documents/Glance as Markdown: Claude's summary (when a key is
+// set), then the full transcript and every question asked.
+const notesDir = () => path.join(app.getPath("documents"), "Glance");
+let savingNotes = false;
+
+function notesFileName(date) {
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}.${pad(date.getMinutes())}.md`;
+}
+
+async function saveNotes() {
+  if (savingNotes) return;
+  if (!transcript.length && !answers.length) {
+    return send("notice", { level: "warn", text: "Nothing to save yet. Listen to a call or ask something first." });
+  }
+  savingNotes = true;
+  broadcastState();
+  const now = new Date();
+  const parts = [`# Notes, ${now.toLocaleString(undefined, { dateStyle: "long", timeStyle: "short" })}`];
+  try {
+    const key = apiKey();
+    if (key) {
+      send("notice", { level: "ok", text: "Writing your notes…" });
+      client ??= createClient(key);
+      try {
+        parts.push(await summarizeSession(client, { transcript, answers }));
+      } catch (e) {
+        log("summary failed:", e);
+        parts.push(`_Summary unavailable: ${describeError(e)}_`);
+      }
+    }
+    if (transcript.length) {
+      parts.push("## Transcript", transcript.map((l) => `**${l.role === "me" ? "You" : "Them"}:** ${l.text}`).join("\n\n"));
+    }
+    if (answers.length) {
+      parts.push("## Questions and answers", answers.map((a) => `### ${a.question || "Help with what's on screen"}\n\n${a.answer}`).join("\n\n"));
+    }
+    mkdirSync(notesDir(), { recursive: true });
+    const file = path.join(notesDir(), notesFileName(now));
+    await writeFile(file, parts.join("\n\n") + "\n");
+    send("notice", { level: "ok", text: `Notes saved to Documents/Glance.`, action: { type: "open", path: file } });
+  } catch (e) {
+    log("save notes failed:", e);
+    send("notice", { level: "error", text: `Couldn't save notes: ${e.message}` });
+  } finally {
+    savingNotes = false;
+    broadcastState();
+  }
+}
+
 async function ensureMicAccess() {
   if (process.platform !== "darwin") return true;
   const status = systemPreferences.getMediaAccessStatus("microphone");
@@ -499,6 +552,12 @@ ipcMain.handle("set-setting", (_e, name, value) => {
 ipcMain.handle("clipboard-read", () => clipboard.readText());
 ipcMain.handle("clipboard-write", (_e, text) => clipboard.writeText(String(text ?? "")));
 ipcMain.handle("add-shot", () => addShot());
+ipcMain.handle("save-notes", () => saveNotes());
+// Only opens files Glance itself wrote.
+ipcMain.handle("open-notes", (_e, file) => {
+  const resolved = path.resolve(String(file));
+  if (resolved.startsWith(notesDir() + path.sep)) shell.openPath(resolved);
+});
 ipcMain.handle("snap-ask", (_e, question) => snapAndAsk(question));
 ipcMain.handle("open-screen-settings", () => shell.openExternal(SCREEN_SETTINGS));
 ipcMain.handle("remove-shot", (_e, id) => {

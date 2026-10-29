@@ -134,3 +134,29 @@ export function describeError(e) {
   return text;
 }
 
+// Turns a session into notes: summary, decisions, action items. The full
+// transcript is appended by the caller, so Claude only writes the summary.
+const NOTES = `Write meeting notes in Markdown from the transcript ("me" = the user, "them" = others) and any questions the user asked.
+Sections, in this order, each only if there is content for it:
+## Summary: 3-6 sentences on what was discussed and concluded.
+## Decisions: bullets.
+## Action items: "- [ ] owner: task (due date if mentioned)" bullets.
+## Open questions: bullets.
+Be factual: only what the transcript supports. Keep names, numbers and dates exact. No preamble, no title.`;
+
+export async function summarizeSession(client, { transcript, answers }) {
+  const lines = transcript.map((l) => `${l.role}: ${l.text}`).join("\n");
+  const qa = answers.map((a) => `Q: ${a.question || "(help with screen)"}\nA: ${a.answer}`).join("\n\n");
+  const msg = await client.messages
+    .stream({
+      model: MODEL,
+      max_tokens: 16000,
+      output_config: { effort: "low" },
+      system: NOTES,
+      messages: [{ role: "user", content: `<transcript>\n${lines || "(none)"}\n</transcript>\n\n<questions>\n${qa || "(none)"}\n</questions>` }],
+    })
+    .finalMessage();
+  if (msg.stop_reason === "refusal") throw new Error("Claude declined to summarize this session.");
+  return msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+}
+

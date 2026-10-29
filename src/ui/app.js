@@ -90,6 +90,8 @@ function renderStrip() {
 function renderMenu() {
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
+  $("saveNotesBtn").disabled = !!state.savingNotes;
+  $("saveNotesMeta").textContent = state.savingNotes ? "Writing your notes…" : "Summary, decisions, action items and full transcript, to Documents/Glance";
   $("transcriptMeta").textContent = state.transcript?.length ? `${state.transcript.length} line${state.transcript.length === 1 ? "" : "s"} so far` : "What Glance has heard so far";
   $("instructionsMeta").textContent = state.customInstructions?.trim() ? "on" : "off";
   $("keyMeta").textContent = state.keyHint ? `ends in ${state.keyHint}` : "not set";
@@ -176,6 +178,13 @@ function showNotice({ level, text, action }) {
   n.hidden = false;
   n.className = `notice ${level}`;
   n.textContent = text;
+  if (action?.type === "open") {
+    const b = document.createElement("button");
+    b.className = "notice-action";
+    b.textContent = "Open notes";
+    b.addEventListener("click", () => g.openNotes(action.path));
+    n.append(" ", b);
+  }
   if (action === "screen-settings") {
     const b = document.createElement("button");
     b.className = "notice-action";
@@ -299,6 +308,10 @@ $("listenBtn").addEventListener("click", () => g.toggleListening());
 $("menuBtn").addEventListener("click", () => {
   setCollapsed(false);
   setMenu(!settingsOpen);
+});
+$("saveNotesBtn").addEventListener("click", () => {
+  setMenu(false);
+  g.saveNotes();
 });
 $("collapseBtn").addEventListener("click", () => setCollapsed(!collapsed));
 $("hideTopBtn").addEventListener("click", () => g.hide());
