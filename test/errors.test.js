@@ -12,3 +12,10 @@ test("maps API failures to plain advice", () => {
   assert.match(describeError(make(Anthropic.InternalServerError, 529, "Overloaded")), /busy/);
   assert.match(describeError(new Anthropic.APIConnectionError({ message: "fetch failed" })), /internet connection/);
 });
+
+test("recognizes an account without the refusal fallback feature", async () => {
+  const { isFallbackUnsupported } = await import("../src/claude.js");
+  assert.ok(isFallbackUnsupported(make(Anthropic.BadRequestError, 400, "fallbacks: this feature is not available for your organization")));
+  assert.ok(!isFallbackUnsupported(make(Anthropic.BadRequestError, 400, "messages: text content blocks must be non-empty")));
+  assert.ok(!isFallbackUnsupported(make(Anthropic.RateLimitError, 429, "fallback rate limited")));
+});

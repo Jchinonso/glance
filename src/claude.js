@@ -80,7 +80,7 @@ function systemPrompt(style, custom) {
 
 // Streams one answer. Each ask is a fresh single-turn request; recent answers
 // ride along as text so follow-ups have context without replaying history.
-export function ask({ client, question, transcript, previous, screenshots, effort, style, customInstructions, onText }) {
+export function ask({ client, question, transcript, previous, screenshots, effort, style, customInstructions, fallback = true, onText }) {
   const content = screenshots.map((data) => ({ type: "image", source: { type: "base64", media_type: "image/jpeg", data } }));
   const prior = previous.length
     ? `<previous_answers>\n${previous.map((p) => `Q: ${p.question || "(auto)"}\nA: ${compressAnswer(p.answer)}`).join("\n\n")}\n</previous_answers>\n\n`
@@ -93,8 +93,8 @@ export function ask({ client, question, transcript, previous, screenshots, effor
   const stream = client.beta.messages.stream({
     model: MODEL,
     max_tokens: 16000,
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
+    // Server-side fallback re-runs a refused request on another model.
+    ...(fallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {}),
     output_config: { effort },
     system: systemPrompt(style, customInstructions),
     messages: [{ role: "user", content }],
@@ -177,5 +177,11 @@ export async function summarizeSession(client, { transcript, answers }, onUsage)
   onUsage?.(msg.usage);
   if (msg.stop_reason === "refusal") throw new Error("Claude declined to summarize this session.");
   return msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
+}
+
+// True when a request failed because the account can't use the refusal
+// fallback feature; the caller then retries without it.
+export function isFallbackUnsupported(e) {
+  return e instanceof Anthropic.BadRequestError && /fallback|server-side-fallback/i.test(String(e?.message));
 }
 

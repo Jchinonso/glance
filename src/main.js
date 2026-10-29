@@ -5,7 +5,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
-import { ask, compressInstructions, createClient, describeError, summarizeSession, usageCost } from "./claude.js";
+import { ask, compressInstructions, createClient, describeError, isFallbackUnsupported, summarizeSession, usageCost } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -32,7 +32,7 @@ const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
 const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", vocabulary: "", apiKey: null };
-const MAX_INSTRUCTIONS = 4000;
+const MAX_INSTRUCTIONS = 5000; // characters; the form reads this from state
 const MAX_SHOTS = 4;
 let config = { ...defaults };
 let win = null;
@@ -46,6 +46,7 @@ let current = null;
 let nextId = 1;
 let shots = []; // screenshots attached to the next question: { id, data, thumb }
 let nextShotId = 1;
+let useFallback = true; // off for the session if the account lacks the feature
 let spend = { input: 0, output: 0, dollars: 0 }; // this session, all calls
 
 function addUsage(u) {
@@ -140,6 +141,8 @@ function state() {
     effort: config.effort,
     style: config.style,
     customInstructions: config.customInstructions,
+    compressedInstructions: config.compressedInstructions,
+    maxInstructions: MAX_INSTRUCTIONS,
     transcription: config.transcription,
     vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
@@ -388,8 +391,9 @@ async function runAsk(question) {
   }
 
   let text = "";
-  const job = ask({
+  const start = () => ask({
     client,
+    fallback: useFallback,
     question: q,
     transcript: transcript.slice(-TRANSCRIPT_LIMIT),
     previous: answers.slice(-PREVIOUS_LIMIT),
@@ -402,10 +406,21 @@ async function runAsk(question) {
       send("answer-delta", { id, text: delta });
     },
   });
-  current = { id, abort: job.abort };
+  let job = start();
+  current = { id, abort: () => job.abort() };
   broadcastState();
   try {
-    const { msg, problem } = await job.done;
+    let result;
+    try {
+      result = await job.done;
+    } catch (e) {
+      if (!useFallback || !isFallbackUnsupported(e) || text) throw e;
+      log("refusal fallback unavailable for this account; retrying without it");
+      useFallback = false;
+      job = start();
+      result = await job.done;
+    }
+    const { msg, problem } = result;
     if (text) answers.push({ question: q, answer: text });
     const u = msg.usage || {};
     const cost = addUsage(u);

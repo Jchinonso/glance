@@ -146,7 +146,11 @@
         <form class="instructions" id="instructionsForm" hidden>
           <p class="lead">Custom instructions</p>
           <p class="hint">Added to Glance's built-in instructions on every question. Tell it how you like answers: tone, length, language, what to focus on, things to avoid. Longer instructions are compressed when you save, so each question sends fewer tokens.</p>
-          <textarea id="instructionsInput" rows="8" maxlength="4000" spellcheck="true" placeholder="For example: Answer in British English. When code is involved, use TypeScript. Explain like I'm a senior engineer, so skip the basics."></textarea>
+          <textarea id="instructionsInput" rows="8" maxlength="5000" spellcheck="true" placeholder="For example: Answer in British English. When code is involved, use TypeScript. Explain like I'm a senior engineer, so skip the basics."></textarea>
+          <details class="sent" id="sentBox" hidden>
+            <summary id="sentSummary">What Glance sends</summary>
+            <pre id="sentText"></pre>
+          </details>
           <div class="formrow">
             <span class="charcount" id="instructionsCount"></span>
             <button type="button" class="ghost danger" id="instructionsClear">Clear</button>

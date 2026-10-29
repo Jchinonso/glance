@@ -340,6 +340,20 @@ body.settings-open .stage { max-height: 640px; }
 }
 .instructions textarea::placeholder { color: var(--faint); }
 .instructions textarea:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-hover); }
+.sent { margin-top: 8px; color: var(--dim); font-size: 12px; }
+.sent summary { cursor: pointer; }
+.sent pre {
+  max-height: 160px;
+  overflow: auto;
+  margin: 6px 0 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: var(--raise);
+  white-space: pre-wrap;
+  font: 12px/1.45 var(--mono);
+  color: var(--text);
+  user-select: text;
+}
 .formrow { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 .charcount { flex-basis: 100%; color: var(--dim); font-size: 12px; font-variant-numeric: tabular-nums; }
 .formrow .danger { margin-right: auto; }

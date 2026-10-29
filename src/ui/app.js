@@ -160,6 +160,7 @@ function renderStage() {
   document.body.classList.toggle("settings-open", settings);
   const instr = !needsKey && editingInstructions;
   $("instructionsForm").hidden = !instr;
+  if (instr) updateInstructionsCount();
   const covered = needsKey || instr || settings || shortcutsOpen;
   $("welcome").hidden = covered || view !== "answers" || answers.length > 0;
   $("answer").hidden = covered || view !== "answers" || page < 0;
@@ -470,7 +471,17 @@ const approxTokens = (text) => Math.ceil(text.trim().length / 4);
 
 function updateInstructionsCount() {
   const text = $("instructionsInput").value;
-  $("instructionsCount").textContent = `${text.length} of 4000 characters, about ${approxTokens(text)} tokens before compression`;
+  // Show the compressed copy that's actually sent, while it matches what's saved.
+  const sent = state.compressedInstructions;
+  const unchanged = text === state.customInstructions;
+  $("sentBox").hidden = !(sent && unchanged);
+  if (sent && unchanged) {
+    $("sentSummary").textContent = `What Glance sends: compressed to about ${approxTokens(sent)} tokens`;
+    $("sentText").textContent = sent;
+  }
+  const max = state.maxInstructions || 5000;
+  $("instructionsInput").maxLength = max;
+  $("instructionsCount").textContent = `${text.length.toLocaleString()} of ${max.toLocaleString()} characters, about ${approxTokens(text)} tokens before compression`;
 }
 function closeInstructions() {
   editingInstructions = false;
@@ -517,8 +528,16 @@ $("nextBtn").addEventListener("click", () => {
 // frontmost app's menu instead of ours. Handle them here.
 async function pasteInto(input) {
   const raw = await g.readClipboard();
-  const text = input instanceof HTMLTextAreaElement ? raw.replace(/\r\n/g, "\n") : raw.replace(/\r?\n/g, " ").trim();
+  let text = input instanceof HTMLTextAreaElement ? raw.replace(/\r\n/g, "\n") : raw.replace(/\r?\n/g, " ").trim();
   if (!text) return;
+  // Programmatic edits ignore maxlength, so enforce it here and say what was cut.
+  if (input.maxLength > 0) {
+    const room = input.maxLength - (input.value.length - (input.selectionEnd - input.selectionStart));
+    if (text.length > room) {
+      showNotice({ level: "warn", text: `Only the first ${Math.max(0, room).toLocaleString()} characters were pasted. The limit is ${input.maxLength.toLocaleString()}.` });
+      text = text.slice(0, Math.max(0, room));
+    }
+  }
   input.setRangeText(text, input.selectionStart, input.selectionEnd, "end");
   input.dispatchEvent(new Event("input", { bubbles: true }));
 }
