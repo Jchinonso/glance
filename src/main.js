@@ -5,7 +5,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
-import { ask, compressInstructions, createClient, describeError, summarizeSession } from "./claude.js";
+import { ask, compressInstructions, createClient, describeError, summarizeSession, usageCost } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -23,7 +23,7 @@ function log(...parts) {
 const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
-const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", transcription: "fast", vocabulary: "", apiKey: null };
+const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "fast", vocabulary: "", apiKey: null };
 const MAX_INSTRUCTIONS = 4000;
 const MAX_SHOTS = 4;
 let config = { ...defaults };
@@ -38,6 +38,19 @@ let current = null;
 let nextId = 1;
 let shots = []; // screenshots attached to the next question: { id, data, thumb }
 let nextShotId = 1;
+let spend = { input: 0, output: 0, dollars: 0 }; // this session, all calls
+
+function addUsage(u) {
+  if (!u) return 0;
+  const cost = usageCost(u);
+  spend = {
+    input: spend.input + (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0),
+    output: spend.output + (u.output_tokens || 0),
+    dollars: spend.dollars + cost,
+  };
+  broadcastState();
+  return cost;
+}
 
 // The API key lives in the login keychain via /usr/bin/security, so it
 // survives rebuilds that change the app's code signature.
@@ -110,6 +123,8 @@ function state() {
     keyHint: apiKey() ? apiKey().slice(-4) : null,
     busy: !!current,
     savingNotes,
+    spend,
+    shortcuts: shortcuts(),
     transcript,
   };
 }
@@ -240,9 +255,9 @@ function createTray() {
   tray.on("right-click", () => {
     tray.popUpContextMenu(
       Menu.buildFromTemplate([
-        { label: win?.isVisible() ? "Hide Glance" : "Show Glance", accelerator: "CommandOrControl+\\", click: toggleWindow },
-        { label: listening ? "Stop listening" : "Start listening", accelerator: "CommandOrControl+Shift+\\", click: toggleListening },
-        { label: "Screenshot and answer", accelerator: "CommandOrControl+Shift+2", click: () => { showWindow(); send("snap-submit"); } },
+        { label: win?.isVisible() ? "Hide Glance" : "Show Glance", accelerator: shortcuts().toggleWindow, click: toggleWindow },
+        { label: listening ? "Stop listening" : "Start listening", accelerator: shortcuts().listen, click: toggleListening },
+        { label: "Screenshot and answer", accelerator: shortcuts().snap, click: () => { showWindow(); send("snap-submit"); } },
         { label: "Save notes", enabled: !savingNotes, click: saveNotes },
         { type: "separator" },
         { label: "Quit Glance", role: "quit" },
@@ -343,9 +358,12 @@ async function runAsk(question) {
   current = { id, abort: job.abort };
   broadcastState();
   try {
-    await job.done;
+    const msg = await job.done;
     answers.push({ question: q, answer: text });
-    send("answer-end", { id });
+    const u = msg.usage || {};
+    const cost = addUsage(u);
+    const tokensIn = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
+    send("answer-end", { id, usage: { input: tokensIn, output: u.output_tokens || 0, cost } });
   } catch (e) {
     const aborted = e?.name === "APIUserAbortError";
     if (!aborted) log("answer failed:", e);
@@ -399,7 +417,7 @@ async function compressSavedInstructions(text) {
   send("notice", { level: "ok", text: "Saved. Compressing them to save tokens…" });
   client ??= createClient(key);
   try {
-    const short = (await compressInstructions(client, text)).slice(0, MAX_INSTRUCTIONS);
+    const short = (await compressInstructions(client, text, addUsage)).slice(0, MAX_INSTRUCTIONS);
     if (config.customInstructions !== text) return; // edited again meanwhile
     if (short && short.length < text.length) {
       config.compressedInstructions = short;
@@ -439,7 +457,7 @@ async function saveNotes() {
       send("notice", { level: "ok", text: "Writing your notes…" });
       client ??= createClient(key);
       try {
-        parts.push(await summarizeSession(client, { transcript, answers }));
+        parts.push(await summarizeSession(client, { transcript, answers }, addUsage));
       } catch (e) {
         log("summary failed:", e);
         parts.push(`_Summary unavailable: ${describeError(e)}_`);
@@ -517,35 +535,80 @@ function createListener() {
   return l;
 }
 
-function registerShortcuts() {
-  const map = {
-    "CommandOrControl+\\": toggleWindow,
-    "CommandOrControl+Enter": () => {
-      if (!win?.isVisible()) win?.show();
-      // Renderer submits whatever is typed (or nothing, for an auto answer).
-      send("submit");
-    },
-    "CommandOrControl+Shift+\\": toggleListening,
-    "CommandOrControl+Shift+2": () => {
-      if (!win?.isVisible()) win?.show();
-      send("snap-submit");
-    },
-    "CommandOrControl+Shift+1": addShot,
-    "CommandOrControl+Shift+H": () => {
-      config.invisible = !config.invisible;
-      saveConfig();
-      applyInvisible();
-      broadcastState();
-    },
-    "CommandOrControl+Up": () => moveBy(0, -80),
-    "CommandOrControl+Down": () => moveBy(0, 80),
-    "CommandOrControl+Left": () => moveBy(-80, 0),
-    "CommandOrControl+Right": () => moveBy(80, 0),
-  };
-  for (const [accel, fn] of Object.entries(map)) {
-    if (!globalShortcut.register(accel, fn)) console.warn(`Could not register ${accel}`);
-  }
+// Remappable global shortcuts. Moving the window with ⌘ + arrows stays fixed.
+const DEFAULT_SHORTCUTS = {
+  toggleWindow: "CommandOrControl+\\",
+  ask: "CommandOrControl+Enter",
+  listen: "CommandOrControl+Shift+\\",
+  snap: "CommandOrControl+Shift+2",
+  addShot: "CommandOrControl+Shift+1",
+  invisible: "CommandOrControl+Shift+H",
+};
+
+const SHORTCUT_ACTIONS = {
+  toggleWindow,
+  ask: () => {
+    if (!win?.isVisible()) win?.show();
+    // Renderer submits whatever is typed (or nothing, for an auto answer).
+    send("submit");
+  },
+  listen: toggleListening,
+  snap: () => {
+    if (!win?.isVisible()) win?.show();
+    send("snap-submit");
+  },
+  addShot,
+  invisible: () => {
+    config.invisible = !config.invisible;
+    saveConfig();
+    applyInvisible();
+    broadcastState();
+  },
+};
+
+function shortcuts() {
+  return { ...DEFAULT_SHORTCUTS, ...(config.shortcuts || {}) };
 }
+
+// Returns the accelerators that couldn't be registered (taken by another app).
+function registerShortcuts() {
+  globalShortcut.unregisterAll();
+  const failed = [];
+  for (const [action, accel] of Object.entries(shortcuts())) {
+    if (!globalShortcut.register(accel, SHORTCUT_ACTIONS[action])) failed.push(accel);
+  }
+  const moves = { Up: [0, -80], Down: [0, 80], Left: [-80, 0], Right: [80, 0] };
+  for (const [key, [dx, dy]] of Object.entries(moves)) globalShortcut.register(`CommandOrControl+${key}`, () => moveBy(dx, dy));
+  if (failed.length) log("shortcuts not registered:", failed.join(", "));
+  return failed;
+}
+
+ipcMain.handle("set-shortcut", (_e, action, accel) => {
+  if (!(action in DEFAULT_SHORTCUTS)) return { error: "Unknown action." };
+  const current = shortcuts();
+  const clash = Object.entries(current).find(([a, k]) => a !== action && k === accel);
+  if (clash) return { error: "Another Glance action already uses that shortcut." };
+  config.shortcuts = { ...(config.shortcuts || {}), [action]: accel };
+  if (registerShortcuts().includes(accel)) {
+    config.shortcuts[action] = current[action];
+    registerShortcuts();
+    return { error: "macOS or another app already uses that shortcut. Try a different one." };
+  }
+  saveConfig();
+  broadcastState();
+  return {};
+});
+ipcMain.handle("reset-shortcuts", () => {
+  config.shortcuts = null;
+  saveConfig();
+  registerShortcuts();
+  broadcastState();
+});
+// While the user records a new shortcut, the old ones must not fire.
+ipcMain.handle("pause-shortcuts", (_e, paused) => {
+  if (paused) globalShortcut.unregisterAll();
+  else registerShortcuts();
+});
 
 ipcMain.handle("get-state", () => state());
 ipcMain.handle("ask", (_e, question) => runAsk(question));
@@ -605,6 +668,7 @@ ipcMain.handle("remove-shot", (_e, id) => {
 ipcMain.handle("clear", () => {
   transcript = [];
   answers = [];
+  spend = { input: 0, output: 0, dollars: 0 };
   shots = [];
   broadcastState();
 });

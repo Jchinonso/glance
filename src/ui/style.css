@@ -384,6 +384,19 @@ body.settings-open .stage { max-height: 640px; }
   overflow-x: auto;
   font: 12.5px/1.55 var(--mono);
 }
+.usage { margin: 10px 0 0; color: var(--faint); font: 12px var(--ui); font-variant-numeric: tabular-nums; }
+.shortcuts .group { margin-top: 12px; }
+.keyrec {
+  display: flex;
+  gap: 4px;
+  min-width: 96px;
+  justify-content: flex-end;
+  padding: 4px 6px;
+  border-radius: 8px;
+}
+.keyrec:hover { background: var(--raise); }
+.keyrec.recording { background: rgba(143, 211, 255, 0.16); color: var(--ice); font-size: 12px; font-weight: 600; padding: 6px 10px; }
+
 /* Code colors */
 .tok-k { color: #c6a0ff; }
 .tok-f { color: #8fd3ff; }

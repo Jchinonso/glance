@@ -9,7 +9,43 @@ let editingKey = false;
 let editingInstructions = false;
 let settingsOpen = false;
 let collapsed = false;
-let pendingQuestion = null; // latest question someone else asked, until answered
+let pendingQuestion = null;
+let editingShortcuts = false;
+let recording = null; // action whose shortcut is being recorded
+
+const SHORTCUT_LABELS = {
+  snap: "Screenshot and answer",
+  ask: "Ask what you've typed",
+  listen: "Start or stop listening",
+  toggleWindow: "Show or hide Glance",
+  addShot: "Add a screenshot without asking",
+  invisible: "Hide from screen sharing",
+};
+const KEY_SYMBOLS = { CommandOrControl: "⌘", Command: "⌘", Cmd: "⌘", Control: "⌃", Ctrl: "⌃", Alt: "⌥", Option: "⌥", Shift: "⇧", Enter: "↵", Return: "↵", Up: "↑", Down: "↓", Left: "←", Right: "→", Space: "Space", Backspace: "⌫", Tab: "⇥" };
+
+function accelKeys(accel = "") {
+  return accel.split("+").map((k) => KEY_SYMBOLS[k] || k);
+}
+function keycaps(accel, small = false) {
+  return accelKeys(accel).map((k) => `<kbd class="cap${small ? " sm" : ""}">${escapeHtml(k)}</kbd>`).join("");
+}
+function plainKeys(accel) {
+  return accelKeys(accel).join("");
+}
+
+// Electron accelerator from a key press; null until a real key is pressed.
+function accelFromEvent(e) {
+  const named = { Enter: "Enter", " ": "Space", ArrowUp: "Up", ArrowDown: "Down", ArrowLeft: "Left", ArrowRight: "Right", Backspace: "Backspace", Tab: "Tab" };
+  if (["Meta", "Shift", "Alt", "Control"].includes(e.key)) return null;
+  let key = named[e.key];
+  if (!key && /^Key[A-Z]$/.test(e.code)) key = e.code.slice(3);
+  if (!key && /^Digit\d$/.test(e.code)) key = e.code.slice(5);
+  if (!key) key = { Backslash: "\\", Slash: "/", Period: ".", Comma: ",", Semicolon: ";", Quote: "'", BracketLeft: "[", BracketRight: "]", Minus: "-", Equal: "=", Backquote: "`" }[e.code];
+  if (!key) return null;
+  const mods = [e.metaKey && "CommandOrControl", e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift"].filter(Boolean);
+  if (!mods.some((m) => m !== "Shift")) return null;
+  return [...mods, key].join("+");
+} // latest question someone else asked, until answered
 
 
 
@@ -90,6 +126,11 @@ function renderStrip() {
 function renderMenu() {
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
+  const sp = state.spend || { input: 0, output: 0, dollars: 0 };
+  $("spendTotal").textContent = sp.dollars ? `about ${formatDollars(sp.dollars)}` : "";
+  $("spendMeta").textContent = sp.dollars
+    ? `${sp.input.toLocaleString()} tokens in, ${sp.output.toLocaleString()} out, at Opus 5.5 list prices`
+    : "Nothing spent yet";
   $("saveNotesBtn").disabled = !!state.savingNotes;
   $("saveNotesMeta").textContent = state.savingNotes ? "Writing your notes…" : "Summary, decisions, action items and full transcript, to Documents/Glance";
   $("transcriptMeta").textContent = state.transcript?.length ? `${state.transcript.length} line${state.transcript.length === 1 ? "" : "s"} so far` : "What Glance has heard so far";
@@ -101,20 +142,52 @@ function renderMenu() {
   for (const b of $("style").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.style));
 }
 
+function renderShortcutHints() {
+  const k = state.shortcuts;
+  if (!k) return;
+  $("guide").innerHTML = [
+    ["snap", "Screenshot your screen and get an answer"],
+    ["ask", "Ask what you've typed below"],
+    ["listen", "Start or stop listening to your call"],
+    ["toggleWindow", "Show or hide Glance"],
+  ]
+    .map(([a, label]) => `<li><span class="keys">${keycaps(k[a])}</span><span>${label}</span></li>`)
+    .join("");
+  $("hints").innerHTML = [["snap", "Screenshot"], ["ask", "Ask"], ["listen", "Listen"]]
+    .map(([a, label]) => `<span>${keycaps(k[a], true)} ${label}</span>`)
+    .join("");
+  $("listenBtn").title = `Listen to your call so answers can use what's said (${plainKeys(k.listen)})`;
+  $("shotBtn").title = `Screenshot your screen and answer it (${plainKeys(k.snap)}). Shift-click or ${plainKeys(k.addShot)} to collect several first.`;
+  $("hideTopBtn").title = `Hide Glance (${plainKeys(k.toggleWindow)}). Bring it back from the menu bar icon.`;
+}
+
+function renderShortcutList() {
+  const k = state.shortcuts || {};
+  $("shortcutList").innerHTML = Object.entries(SHORTCUT_LABELS)
+    .map(
+      ([a, label]) =>
+        `<div class="row"><div class="row-text"><span>${label}</span></div><button type="button" class="keyrec${recording === a ? " recording" : ""}" data-action="${a}">${recording === a ? "Press new keys…" : keycaps(k[a], true)}</button></div>`,
+    )
+    .join("");
+}
+
 function renderStage() {
   const needsKey = !state.hasKey || editingKey;
   $("keyForm").hidden = !needsKey;
   const changing = needsKey && state.hasKey;
   $("keyLead").textContent = changing ? `Replace your API key (current one ends in ${state.keyHint}).` : "Add your Anthropic API key to start.";
   $("keyManage").hidden = !changing;
-  const settings = !needsKey && !editingInstructions && settingsOpen;
+  const shortcutsOpen = !needsKey && editingShortcuts;
+  $("shortcutsPanel").hidden = !shortcutsOpen;
+  if (shortcutsOpen) renderShortcutList();
+  const settings = !needsKey && !editingInstructions && !shortcutsOpen && settingsOpen;
   $("menu").hidden = !settings;
   $("menuBtn").setAttribute("aria-expanded", String(settings));
   $("menuBtn").title = settings ? "Close settings" : "Settings";
   document.body.classList.toggle("settings-open", settings);
   const instr = !needsKey && editingInstructions;
   $("instructionsForm").hidden = !instr;
-  const covered = needsKey || instr || settings;
+  const covered = needsKey || instr || settings || shortcutsOpen;
   $("welcome").hidden = covered || view !== "answers" || answers.length > 0;
   $("answer").hidden = covered || view !== "answers" || page < 0;
   $("transcript").hidden = covered || view !== "transcript";
@@ -128,9 +201,11 @@ function renderStage() {
     $("answer").classList.toggle("streaming", a.status === "streaming");
     $("answerQ").textContent = a.question || "Help with what's on screen";
     $("answerBody").innerHTML = renderMarkdown(a.text) + (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "");
+    $("answerUsage").hidden = !a.usage;
+    if (a.usage) $("answerUsage").textContent = `About ${formatDollars(a.usage.cost)} for this answer (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
   }
 
-  document.querySelector(".dock").hidden = needsKey || instr || settings;
+  document.querySelector(".dock").hidden = needsKey || instr || settings || shortcutsOpen;
 
   const showPager = view === "answers" && answers.length > 1 && !covered;
   $("pager").hidden = !showPager;
@@ -159,7 +234,12 @@ function renderShots() {
   $("question").placeholder = shots.length ? `Ask about ${shots.length === 1 ? "this screenshot" : `these ${shots.length} screenshots`}, or just press Ask` : "Type a question, or just press Ask";
 }
 
+function formatDollars(n) {
+  return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
+}
+
 function render() {
+  renderShortcutHints();
   renderStrip();
   renderMenu();
   renderStage();
@@ -266,7 +346,7 @@ g.on("answer-delta", ({ id, text }) => {
     $("stage").scrollTop = $("stage").scrollHeight;
   }
 });
-g.on("answer-end", ({ id, error, aborted }) => {
+g.on("answer-end", ({ id, error, aborted, usage }) => {
   const i = answers.findIndex((x) => x.id === id);
   if (i < 0) return;
   const a = answers[i];
@@ -276,6 +356,7 @@ g.on("answer-end", ({ id, error, aborted }) => {
   } else {
     a.status = error ? "error" : "done";
     a.error = error;
+    a.usage = usage;
   }
   renderStage();
 });
@@ -315,6 +396,49 @@ $("menuBtn").addEventListener("click", () => {
 $("saveNotesBtn").addEventListener("click", () => {
   setMenu(false);
   g.saveNotes();
+});
+$("shortcutsBtn").addEventListener("click", () => {
+  settingsOpen = false;
+  editingShortcuts = true;
+  render();
+});
+function stopRecording() {
+  if (!recording) return;
+  recording = null;
+  g.pauseShortcuts(false);
+  renderShortcutList();
+}
+$("shortcutList").addEventListener("click", (e) => {
+  const action = e.target.closest(".keyrec")?.dataset.action;
+  if (!action) return;
+  if (recording === action) return stopRecording();
+  recording = action;
+  g.pauseShortcuts(true);
+  renderShortcutList();
+});
+document.addEventListener(
+  "keydown",
+  async (e) => {
+    if (!recording) return;
+    e.preventDefault();
+    e.stopImmediatePropagation();
+    if (e.key === "Escape") return stopRecording();
+    const accel = accelFromEvent(e);
+    if (!accel) return;
+    const action = recording;
+    recording = null;
+    const { error } = await g.setShortcut(action, accel);
+    g.pauseShortcuts(false);
+    if (error) showNotice({ level: "error", text: error });
+    renderShortcutList();
+  },
+  true,
+);
+$("shortcutsReset").addEventListener("click", () => g.resetShortcuts());
+$("shortcutsDone").addEventListener("click", () => {
+  stopRecording();
+  editingShortcuts = false;
+  render();
 });
 $("collapseBtn").addEventListener("click", () => setCollapsed(!collapsed));
 $("hideTopBtn").addEventListener("click", () => g.hide());
@@ -446,7 +570,10 @@ document.addEventListener("keydown", (e) => {
     }
   }
   if (e.key === "Escape") {
-    if (settingsOpen) setMenu(false);
+    if (editingShortcuts) {
+      editingShortcuts = false;
+      render();
+    } else if (settingsOpen) setMenu(false);
     else if (editingInstructions) closeInstructions();
     else if (view === "transcript") {
       view = "answers";

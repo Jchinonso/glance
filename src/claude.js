@@ -3,6 +3,20 @@ import { caveman, compressAnswer, compressTranscript } from "./compress.js";
 
 export const MODEL = "claude-opus-5-5";
 
+// Claude Opus 5.5 list prices, USD per million tokens. A refusal fallback may
+// bill at another model's rates, so costs shown are estimates.
+const PRICE = { input: 4, output: 20, cacheWrite: 5, cacheRead: 0.2 };
+
+export function usageCost(u = {}) {
+  return (
+    ((u.input_tokens || 0) * PRICE.input +
+      (u.output_tokens || 0) * PRICE.output +
+      (u.cache_creation_input_tokens || 0) * PRICE.cacheWrite +
+      (u.cache_read_input_tokens || 0) * PRICE.cacheRead) /
+    1e6
+  );
+}
+
 // Built-in instructions, written caveman-style (see the caveman skill): they
 // ride along on every question, so every word saved here is saved each time.
 // The first line keeps Claude from copying this terse style into its answers.
@@ -105,7 +119,7 @@ const COMPRESS = `Rewrite the user's instructions for an AI assistant so they us
 - Keep the original language and any headings that group information.
 Output only the rewritten instructions, with no preamble or commentary.`;
 
-export async function compressInstructions(client, text) {
+export async function compressInstructions(client, text, onUsage) {
   const msg = await client.messages.create({
     model: MODEL,
     max_tokens: 8000,
@@ -113,6 +127,7 @@ export async function compressInstructions(client, text) {
     system: COMPRESS,
     messages: [{ role: "user", content: `<instructions>\n${text}\n</instructions>` }],
   });
+  onUsage?.(msg.usage);
   if (msg.stop_reason === "refusal") throw new Error("Claude declined to compress these instructions.");
   if (msg.stop_reason === "max_tokens") throw new Error("The compressed version came out too long. Try trimming the instructions first.");
   return msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
@@ -144,7 +159,7 @@ Sections, in this order, each only if there is content for it:
 ## Open questions: bullets.
 Be factual: only what the transcript supports. Keep names, numbers and dates exact. No preamble, no title.`;
 
-export async function summarizeSession(client, { transcript, answers }) {
+export async function summarizeSession(client, { transcript, answers }, onUsage) {
   const lines = transcript.map((l) => `${l.role}: ${l.text}`).join("\n");
   const qa = answers.map((a) => `Q: ${a.question || "(help with screen)"}\nA: ${a.answer}`).join("\n\n");
   const msg = await client.messages
@@ -156,6 +171,7 @@ export async function summarizeSession(client, { transcript, answers }) {
       messages: [{ role: "user", content: `<transcript>\n${lines || "(none)"}\n</transcript>\n\n<questions>\n${qa || "(none)"}\n</questions>` }],
     })
     .finalMessage();
+  onUsage?.(msg.usage);
   if (msg.stop_reason === "refusal") throw new Error("Claude declined to summarize this session.");
   return msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
