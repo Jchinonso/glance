@@ -215,8 +215,6 @@ body.collapsed .dock { display: none !important; }
 .who.me { color: var(--ice); }
 
 /* Settings panel (replaces the stage content, so the window never stretches) */
-.menu-open .menu-btn-gear { display: none; }
-#menuBtn .close { display: none; }
 #menuBtn[aria-expanded="true"] { background: rgba(143, 211, 255, 0.16); color: var(--ice); }
 
 .settings h2 {

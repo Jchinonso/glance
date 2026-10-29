@@ -68,10 +68,21 @@ function readKeychainKey() {
   }
 }
 
+// Anthropic keys only use these characters; anything else is refused rather
+// than passed to `security`.
+const KEY_CHARS = /^[A-Za-z0-9_-]+$/;
+
 function writeKeychainKey(key) {
   const base = ["-s", KEYCHAIN.service, "-a", KEYCHAIN.account];
-  if (key) execFileSync("/usr/bin/security", ["add-generic-password", "-U", ...base, "-w", key], { stdio: "ignore" });
-  else {
+  if (key) {
+    if (!KEY_CHARS.test(key)) throw new Error("that doesn't look like an API key");
+    // Fed on stdin in interactive mode so the key never shows in the process list.
+    execFileSync("/usr/bin/security", ["-i"], {
+      input: `add-generic-password -U -s ${KEYCHAIN.service} -a ${KEYCHAIN.account} -w ${key}\n`,
+      stdio: ["pipe", "ignore", "ignore"],
+    });
+    if (readKeychainKey() !== key) throw new Error("the keychain didn't accept it");
+  } else {
     try {
       execFileSync("/usr/bin/security", ["delete-generic-password", ...base], { stdio: "ignore" });
     } catch {}
@@ -104,8 +115,14 @@ function apiKey() {
   return config.apiKey || process.env.ANTHROPIC_API_KEY || null;
 }
 
+// Messages sent before the window finishes loading are queued, not lost.
+let windowReady = false;
+const pending = [];
+
 function send(channel, payload) {
-  if (win && !win.isDestroyed()) win.webContents.send(channel, payload);
+  if (!win || win.isDestroyed()) return;
+  if (!windowReady) return void pending.push([channel, payload]);
+  win.webContents.send(channel, payload);
 }
 
 function state() {
@@ -183,6 +200,10 @@ function createWindow() {
   nativeTheme.on("updated", () => win?.setVibrancy(nativeTheme.shouldUseDarkColors ? "hud" : "popover"));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
+  win.webContents.on("did-finish-load", () => {
+    windowReady = true;
+    for (const [channel, payload] of pending.splice(0)) win.webContents.send(channel, payload);
+  });
   win.loadFile(path.join(here, "ui", "index.html"));
   win.once("ready-to-show", () => {
     applyInvisible();
@@ -476,7 +497,8 @@ async function saveNotes() {
       parts.push("## Questions and answers", answers.map((a) => `### ${a.question || "Help with what's on screen"}\n\n${a.answer}`).join("\n\n"));
     }
     mkdirSync(notesDir(), { recursive: true });
-    const file = path.join(notesDir(), notesFileName(now));
+    let file = path.join(notesDir(), notesFileName(now));
+    for (let n = 2; existsSync(file); n++) file = path.join(notesDir(), notesFileName(now).replace(/\.md$/, ` (${n}).md`));
     await writeFile(file, parts.join("\n\n") + "\n");
     send("notice", { level: "ok", text: `Notes saved to Documents/Glance.`, action: { type: "open", path: file } });
   } catch (e) {
@@ -562,7 +584,10 @@ const SHORTCUT_ACTIONS = {
     if (!win?.isVisible()) win?.show();
     send("snap-submit");
   },
-  addShot,
+  addShot: () => {
+    if (!win?.isVisible()) showWindow();
+    addShot();
+  },
   invisible: () => {
     config.invisible = !config.invisible;
     saveConfig();
@@ -626,12 +651,17 @@ ipcMain.handle("ask", (_e, question) => runAsk(question));
 ipcMain.handle("cancel", () => current?.abort());
 ipcMain.handle("toggle-listening", () => toggleListening());
 ipcMain.handle("set-api-key", (_e, key) => {
-  config.apiKey = (key || "").trim() || null;
-  client = null;
+  const value = String(key ?? "").trim() || null;
+  if (value && !value.startsWith("sk-ant-")) {
+    send("notice", { level: "error", text: "That doesn't look like an Anthropic API key. Keys start with sk-ant-." });
+    return broadcastState();
+  }
   try {
-    writeKeychainKey(config.apiKey);
+    writeKeychainKey(value);
+    config.apiKey = value;
+    client = null;
   } catch (e) {
-    send("notice", { level: "error", text: `Couldn't save the key to your keychain: ${e.message}` });
+    send("notice", { level: "error", text: `Couldn't save the key: ${e.message}.` });
   }
   broadcastState();
 });
@@ -711,12 +741,10 @@ app.whenReady().then(() => {
   const failed = registerShortcuts();
   if (failed.length) {
     // Usually another app (Cluely, for example) holds the same keys.
-    win.webContents.once("did-finish-load", () =>
-      send("notice", {
-        level: "warn",
-        text: `${failed.map(formatAccel).join(", ")} ${failed.length === 1 ? "is" : "are"} already used by another app. Change ${failed.length === 1 ? "it" : "them"} in Settings > Keyboard.`,
-      }),
-    );
+    send("notice", {
+      level: "warn",
+      text: `${failed.map(formatAccel).join(", ")} ${failed.length === 1 ? "is" : "are"} already used by another app. Change ${failed.length === 1 ? "it" : "them"} in Settings > Keyboard.`,
+    });
   }
 });
 

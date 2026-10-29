@@ -541,7 +541,7 @@ $("nextBtn").addEventListener("click", () => {
   page = Math.min(answers.length - 1, page + 1);
   renderStage();
 });
-// Glance is a non-activating panel, so macOS sends ⌘C/⌘V/⌘X/⌘A to the
+// Glance is a non-activating panel, so macOS sends ⌘C/⌘V/⌘X/⌘A/⌘Z to the
 // frontmost app's menu instead of ours. Handle them here.
 async function pasteInto(input) {
   const raw = await g.readClipboard();
@@ -552,12 +552,22 @@ async function pasteInto(input) {
 }
 
 document.addEventListener("keydown", (e) => {
+  if (e.metaKey && e.shiftKey && !e.altKey && !e.ctrlKey && e.key.toLowerCase() === "z" && (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement)) {
+    e.preventDefault();
+    document.execCommand("redo");
+    return;
+  }
   if (e.metaKey && !e.shiftKey && !e.altKey && !e.ctrlKey) {
     const k = e.key.toLowerCase();
     const input = e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement ? e.target : null;
     if (k === "v" && input) {
       e.preventDefault();
       pasteInto(input);
+      return;
+    }
+    if (k === "z" && input) {
+      e.preventDefault();
+      document.execCommand("undo");
       return;
     }
     if (k === "a" && input) {
