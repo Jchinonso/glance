@@ -384,6 +384,13 @@ body.settings-open .stage { max-height: 640px; }
   overflow-x: auto;
   font: 12.5px/1.55 var(--mono);
 }
+/* Code colors */
+.tok-k { color: #c6a0ff; }
+.tok-f { color: #8fd3ff; }
+.tok-s { color: #a8e6a1; }
+.tok-n { color: #ffb38a; }
+.tok-c { color: #6f7d8c; font-style: italic; }
+
 .body .err { color: var(--alert); font: 13px/1.45 var(--ui); }
 .streaming .body > :last-child::after {
   content: "";
@@ -488,3 +495,35 @@ input:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-h
   .streaming .body > :last-child::after,
   .streaming .body:empty::after { animation: none; }
 }
+
+/* Light appearance follows macOS. The native blur switches material too. */
+@media (prefers-color-scheme: light) {
+  :root {
+    --glass: rgba(250, 251, 253, 0.8);
+    --edge: rgba(20, 40, 70, 0.14);
+    --raise: rgba(20, 40, 70, 0.06);
+    --raise-hover: rgba(20, 40, 70, 0.11);
+    --text: #16202b;
+    --dim: #5b6876;
+    --faint: #8a96a3;
+    --ice: #1f7fc4;
+    --violet: #6b4fd8;
+    --mint: #12946f;
+    --alert: #c8402f;
+    --caution: #9a6b00;
+  }
+  .primary, .count { color: #fff; }
+  .answer-q { color: #fff; }
+  .listening .listen { background: rgba(18, 148, 111, 0.12); }
+  .body pre { background: rgba(20, 40, 70, 0.05); }
+  .cap { background: linear-gradient(#fff, #f1f3f6); }
+  .switch::after { box-shadow: 0 1px 3px rgba(0, 0, 0, 0.25); }
+  .row[aria-checked="true"] .switch { background: var(--ice); }
+  .tok-k { color: #7a3fd1; }
+  .tok-f { color: #1f6fb0; }
+  .tok-s { color: #2a7d32; }
+  .tok-n { color: #b5521c; }
+  .tok-c { color: #8a96a3; }
+  .shot .remove { background: rgba(255, 255, 255, 0.9); color: #16202b; }
+}
+

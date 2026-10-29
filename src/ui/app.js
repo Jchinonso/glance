@@ -29,7 +29,7 @@ function renderMarkdown(src) {
   return src
     .split(/```/)
     .map((part, i) => {
-      if (i % 2 === 1) return `<pre><code>${escapeHtml(part.replace(/^[\w+-]*\n/, ""))}</code></pre>`;
+      if (i % 2 === 1) return `<pre><code>${highlightCode(part.replace(/^[\w+-]*\n/, ""))}</code></pre>`;
       return part
         .split(/\n{2,}/)
         .map((block) => {
@@ -251,6 +251,7 @@ g.on("answer-start", ({ id, question }) => {
   settingsOpen = false;
   pendingQuestion = null;
   setCollapsed(false);
+  renderStrip();
   try {
     localStorage.setItem("glance.seenAnswer", "1");
   } catch {}

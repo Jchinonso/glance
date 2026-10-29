@@ -1,4 +1,4 @@
-import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, Notification, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
+import { app, BrowserWindow, clipboard, desktopCapturer, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
@@ -135,11 +135,10 @@ function createWindow() {
     height: 200,
     minWidth: 420,
     minHeight: 44,
-    x: Math.round(workArea.x + (workArea.width - width) / 2),
-    y: workArea.y + 24,
+    ...startPosition(width, workArea),
     frame: false,
     // Native blur: CSS backdrop-filter can't see the desktop behind the window.
-    vibrancy: "hud",
+    vibrancy: nativeTheme.shouldUseDarkColors ? "hud" : "popover",
     visualEffectState: "active",
     backgroundColor: "#00000000",
     roundedCorners: true,
@@ -164,6 +163,13 @@ function createWindow() {
     config.width = win.getSize()[0];
     saveConfig();
   });
+  win.on("moved", () => {
+    const [x, y] = win.getPosition();
+    config.position = { x, y };
+    saveConfig();
+  });
+  // Light and dark need different native blur materials.
+  nativeTheme.on("updated", () => win?.setVibrancy(nativeTheme.shouldUseDarkColors ? "hud" : "popover"));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.loadFile(path.join(here, "ui", "index.html"));
@@ -189,6 +195,15 @@ function hideWindow() {
     config.hideTipShown = true;
     saveConfig();
   }
+}
+
+// Reopen where the user left it, if that spot is still on a connected display.
+function startPosition(width, workArea) {
+  const p = config.position;
+  if (p && screen.getAllDisplays().some((d) => p.x >= d.workArea.x && p.x < d.workArea.x + d.workArea.width && p.y >= d.workArea.y && p.y < d.workArea.y + d.workArea.height)) {
+    return { x: p.x, y: p.y };
+  }
+  return { x: Math.round(workArea.x + (workArea.width - width) / 2), y: workArea.y + 24 };
 }
 
 function toggleWindow() {
