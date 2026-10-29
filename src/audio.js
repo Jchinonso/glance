@@ -107,13 +107,15 @@ function wav(pcm) {
 // Whisper hallucinates these on silence/noise; drop them.
 const NOISE = /^\s*(\[.*\]|\(.*\)|you|thank you\.?|thanks for watching!?|\.+)\s*$/i;
 
-export function whisper({ modelPath, binary }, pcm) {
+// `prompt` primes Whisper with words to expect (tech terms, names), which fixes
+// most mishearings of jargon at no speed cost.
+export function whisper({ modelPath, binary, prompt }, pcm) {
   return new Promise(async (resolve) => {
     const file = path.join(os.tmpdir(), `glance-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
     await writeFile(file, wav(pcm));
     execFile(
       binary,
-      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-t", "4"],
+      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-t", "4", ...(prompt ? ["--prompt", prompt] : [])],
       { timeout: 30000 },
       (err, stdout) => {
         unlink(file).catch(() => {});
@@ -137,10 +139,10 @@ function findBinary(name) {
 }
 
 export class Listener extends EventEmitter {
-  constructor({ modelPath, audioteePath, whisperBinary = findBinary("whisper-cli"), soxBinary = findBinary("rec") }) {
+  constructor({ modelPath, prompt, audioteePath, whisperBinary = findBinary("whisper-cli"), soxBinary = findBinary("rec") }) {
     super();
     this.audioteePath = audioteePath;
-    this.opts = { modelPath, binary: whisperBinary };
+    this.opts = { modelPath, prompt, binary: whisperBinary };
     this.soxBinary = soxBinary;
     this.queue = Promise.resolve();
     this.running = false;
@@ -169,6 +171,11 @@ export class Listener extends EventEmitter {
     this.tee.on("data", ({ data }) => this.them.push(data));
     this.tee.on("error", (e) => this.emit("error", `System audio failed: ${e.message}`));
     this.tee.start().catch((e) => this.emit("error", `System audio failed: ${e.message}`));
+  }
+
+  // Takes effect from the next segment; no restart needed.
+  setTranscription({ modelPath, prompt }) {
+    this.opts = { ...this.opts, modelPath, prompt };
   }
 
   stop() {

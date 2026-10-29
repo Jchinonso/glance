@@ -90,6 +90,21 @@
             </button>
           </div>
 
+          <h2>Listening</h2>
+          <div class="group">
+            <div class="row">
+              <div class="row-text"><span>Transcription</span><small>Accurate is slower but better with accents and noise</small></div>
+              <div class="seg" id="transcription" role="radiogroup">
+                <button role="radio" data-value="fast">Fast</button>
+                <button role="radio" data-value="accurate">Accurate</button>
+              </div>
+            </div>
+            <label class="row stacked" for="vocabularyInput">
+              <div class="row-text"><span>Words to recognize</span><small>Names, products and jargon Glance should listen for, separated by commas</small></div>
+              <input id="vocabularyInput" maxlength="500" placeholder="e.g. Chinonso, KenchiOps, pgvector" spellcheck="false" />
+            </label>
+          </div>
+
           <h2>Privacy</h2>
           <div class="group">
             <button class="row" id="cloakToggle" role="switch">

@@ -23,7 +23,7 @@ function log(...parts) {
 const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
-const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", apiKey: null };
+const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", transcription: "fast", vocabulary: "", apiKey: null };
 const MAX_INSTRUCTIONS = 4000;
 const MAX_SHOTS = 4;
 let config = { ...defaults };
@@ -102,6 +102,8 @@ function state() {
     effort: config.effort,
     style: config.style,
     customInstructions: config.customInstructions,
+    transcription: config.transcription,
+    vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
     shots: shots.map(({ id, thumb }) => ({ id, thumb })),
     hasKey: !!apiKey(),
@@ -472,9 +474,23 @@ async function toggleListening() {
   broadcastState();
 }
 
+// "fast" = base.en, "accurate" = small.en (about 2x slower, better with
+// accents and noise). Falls back to base.en if the bigger model is missing.
+const TECH_TERMS = "React, Next.js, TypeScript, JavaScript, Node.js, Python, Go, Rust, Java, Postgres, PostgreSQL, MySQL, Redis, MongoDB, Kubernetes, Docker, GraphQL, REST, API, AWS, GCP, Azure, SQL, CI/CD, LeetCode";
+
+function transcriptionOptions() {
+  const model = (name) => unpacked(path.join(here, "..", "models", `ggml-${name}.bin`));
+  const accurate = config.transcription === "accurate" && existsSync(model("small.en"));
+  const words = config.vocabulary.trim();
+  return {
+    modelPath: model(accurate ? "small.en" : "base.en"),
+    prompt: `Terms: ${TECH_TERMS}.${words ? ` Names and terms: ${words}.` : ""}`,
+  };
+}
+
 function createListener() {
   const l = new Listener({
-    modelPath: unpacked(path.join(here, "..", "models", "ggml-base.en.bin")),
+    ...transcriptionOptions(),
     audioteePath: unpacked(path.join(here, "..", "node_modules", "audiotee", "bin", "audiotee")),
   });
   l.on("line", (line) => {
@@ -534,6 +550,13 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   if (name === "effort" && ["low", "medium", "high"].includes(value)) config.effort = value;
   else if (name === "autoScreen") config.autoScreen = !!value;
   else if (name === "style" && ["brief", "natural"].includes(value)) config.style = value;
+  else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
+    config.transcription = value;
+    listener?.setTranscription(transcriptionOptions());
+  } else if (name === "vocabulary") {
+    config.vocabulary = String(value ?? "").slice(0, 500);
+    listener?.setTranscription(transcriptionOptions());
+  }
   else if (name === "customInstructions") {
     const text = String(value ?? "").slice(0, MAX_INSTRUCTIONS);
     if (text !== config.customInstructions) {
