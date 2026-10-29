@@ -5,6 +5,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
+import { caveman } from "./compress.js";
 import { ask, compressInstructions, createClient, describeError, isFallbackUnsupported, summarizeSession, usageCost } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -103,6 +104,10 @@ function loadConfig() {
     raw = JSON.parse(readFileSync(configPath, "utf8"));
   } catch {}
   const { apiKeyEnc, apiKey: _ignored, ...settings } = raw;
+  // A value of the wrong type (hand edit, older build) falls back to the default.
+  for (const [k, v] of Object.entries(settings)) {
+    if (k in defaults && defaults[k] !== null && typeof v !== typeof defaults[k]) delete settings[k];
+  }
   config = { ...defaults, ...settings, apiKey: readKeychainKey() };
   // Migrate a key saved by older builds, if this build can still decrypt it.
   if (!config.apiKey && apiKeyEnc) {
@@ -114,9 +119,15 @@ function loadConfig() {
   if (apiKeyEnc) saveConfig();
 }
 
+// Written to a temp file and renamed, so a crash mid-write can't corrupt it.
 function saveConfig() {
   const { apiKey, ...rest } = config;
-  writeFileSync(configPath, JSON.stringify(rest, null, 2));
+  try {
+    writeFileSync(`${configPath}.tmp`, JSON.stringify(rest, null, 2));
+    renameSync(`${configPath}.tmp`, configPath);
+  } catch (e) {
+    log("saving settings failed:", e);
+  }
 }
 
 function apiKey() {
@@ -142,6 +153,7 @@ function state() {
     style: config.style,
     customInstructions: config.customInstructions,
     compressedInstructions: config.compressedInstructions,
+    sentInstructions: caveman(config.compressedInstructions || config.customInstructions),
     maxInstructions: MAX_INSTRUCTIONS,
     transcription: config.transcription,
     vocabulary: config.vocabulary,
@@ -201,10 +213,16 @@ function createWindow() {
     config.width = win.getSize()[0];
     saveConfig();
   });
+  // "moved" fires continuously while dragging; save once it settles.
+  let moveTimer = null;
   win.on("moved", () => {
-    const [x, y] = win.getPosition();
-    config.position = { x, y };
-    saveConfig();
+    clearTimeout(moveTimer);
+    moveTimer = setTimeout(() => {
+      if (win.isDestroyed()) return;
+      const [x, y] = win.getPosition();
+      config.position = { x, y };
+      saveConfig();
+    }, 400);
   });
   // Light and dark need different native blur materials.
   nativeTheme.on("updated", () => win?.setVibrancy(nativeTheme.shouldUseDarkColors ? "hud" : "popover"));
@@ -651,7 +669,13 @@ function registerShortcuts() {
     try {
       if (!globalShortcut.register(accel, SHORTCUT_ACTIONS[action])) failed.push(accel);
     } catch {
-      failed.push(accel); // malformed accelerator, e.g. a hand-edited config
+      // Malformed (e.g. a hand-edited settings file): go back to the default.
+      log("invalid shortcut replaced with default:", accel);
+      delete config.shortcuts?.[action];
+      saveConfig();
+      try {
+        if (!globalShortcut.register(DEFAULT_SHORTCUTS[action], SHORTCUT_ACTIONS[action])) failed.push(DEFAULT_SHORTCUTS[action]);
+      } catch {}
     }
   }
   const moves = { Up: [0, -80], Down: [0, 80], Left: [-80, 0], Right: [80, 0] };

@@ -20,3 +20,12 @@ test("detects questions with and without a question mark", () => {
 test("ignores statements", () => {
   for (const s of ["I'll send the doc tomorrow.", "That sounds good to me", "Whatever works."]) assert.ok(!isQuestion(s), s);
 });
+
+test("detects a question that follows a statement", () => {
+  for (const q of [
+    "Thanks for that. Can you walk me through the deploy",
+    "We use Postgres today, so how would you scale reads",
+    "I see. What would you change",
+  ]) assert.ok(isQuestion(q), q);
+  assert.ok(!isQuestion("Thanks for that. I'll send the deploy notes later."));
+});

@@ -226,6 +226,9 @@ function renderTranscriptLine(l) {
   p.className = "line";
   p.innerHTML = line(l);
   $("transcript").appendChild(p);
+  // The view keeps the latest 1,000 lines; saved notes still get every line.
+  const lines = $("transcript").querySelectorAll(".line");
+  if (lines.length > 1000) lines[0].remove();
   if (view === "transcript") $("stage").scrollTop = $("stage").scrollHeight;
 }
 
@@ -471,12 +474,12 @@ const approxTokens = (text) => Math.ceil(text.trim().length / 4);
 
 function updateInstructionsCount() {
   const text = $("instructionsInput").value;
-  // Show the compressed copy that's actually sent, while it matches what's saved.
-  const sent = state.compressedInstructions;
+  // Show exactly what's sent with each question, while it matches what's saved.
+  const sent = state.sentInstructions;
   const unchanged = text === state.customInstructions;
   $("sentBox").hidden = !(sent && unchanged);
   if (sent && unchanged) {
-    $("sentSummary").textContent = `What Glance sends: compressed to about ${approxTokens(sent)} tokens`;
+    $("sentSummary").textContent = `What Glance sends with each question: about ${approxTokens(sent)} tokens`;
     $("sentText").textContent = sent;
   }
   const max = state.maxInstructions || 5000;
