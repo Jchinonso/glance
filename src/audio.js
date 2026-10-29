@@ -12,9 +12,12 @@ const PRE_ROLL_FRAMES = 10; // keep 300 ms before speech starts
 const END_SILENCE_FRAMES = 27; // ~800 ms of silence ends a segment
 const MAX_SEGMENT_FRAMES = 500; // 15 s hard cap
 const MIN_SPEECH_FRAMES = 12; // drop blips under ~360 ms
+const FLOOR_WINDOW_FRAMES = 167; // ~5 s of history for the noise floor
 
 // Energy-based voice activity detector that cuts a 16 kHz mono int16 stream
-// into speech segments. Noise floor adapts while nobody is talking.
+// into speech segments. The noise floor is the quietest frame of the last ~5 s:
+// speech always has pauses, so this tracks the room even when it gets louder
+// (a fan, music), which a silence-only estimate never notices.
 export class Segmenter extends EventEmitter {
   constructor() {
     super();
@@ -25,6 +28,7 @@ export class Segmenter extends EventEmitter {
     this.silence = 0;
     this.speaking = false;
     this.floor = 200;
+    this.history = [];
     this.lastSpeechAt = 0;
   }
 
@@ -44,8 +48,10 @@ export class Segmenter extends EventEmitter {
       sum += s * s;
     }
     const rms = Math.sqrt(sum / FRAME);
+    this.history.push(rms);
+    if (this.history.length > FLOOR_WINDOW_FRAMES) this.history.shift();
+    this.floor = this.floor * 0.9 + Math.min(...this.history) * 0.1;
     const isSpeech = rms > this.floor * 2.5 + 150;
-    if (!isSpeech && !this.speaking) this.floor = this.floor * 0.98 + rms * 0.02;
     if (isSpeech) this.lastSpeechAt = Date.now();
 
     const copy = Buffer.from(buf);

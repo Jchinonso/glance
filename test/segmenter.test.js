@@ -53,3 +53,23 @@ test("listener reports when capture dies on its own", async () => {
   assert.ok(errors.some((e) => /Microphone capture stopped/.test(e)), errors.join(" | "));
   assert.equal(l.running, false);
 });
+
+test("steady background noise is not mistaken for speech", () => {
+  const seg = new Segmenter();
+  let count = 0;
+  seg.on("segment", () => count++);
+  const noise = (seconds, amp) => {
+    const n = Math.round(seconds * RATE);
+    const b = Buffer.alloc(n * 2);
+    for (let i = 0; i < n; i++) b.writeInt16LE(Math.round((Math.random() * 2 - 1) * amp), i * 2);
+    return b;
+  };
+  seg.push(noise(2, 30));
+  seg.push(noise(60, 1500)); // a fan turns on
+  const fromNoise = count;
+  assert.ok(fromNoise <= 1, `${fromNoise} segments from noise`); // at most the moment it switched on
+  // Speech over the louder room is still detected, as exactly one segment.
+  seg.push(pcm(1.5, 12000));
+  seg.push(noise(1.2, 1500));
+  assert.equal(count, fromNoise + 1);
+});

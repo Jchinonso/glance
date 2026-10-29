@@ -30,6 +30,16 @@ A macOS overlay that answers questions about your screen and your calls using Cl
 
 Shortcuts can be changed in Settings > Keyboard. The menu bar icon shows or hides the window; right-click it for more.
 
+Settings (the gear) covers:
+
+- **Answers:** depth (Quick, Balanced, Thorough), style (Natural or Brief), custom instructions (compressed automatically when saved), and whether every question includes a screenshot.
+- **Listening:** Accurate or Fast transcription, plus words to recognize (names, products, jargon).
+- **Privacy:** hide from screen sharing.
+- **Session:** the transcript, spending so far, Save notes, Clear session.
+- **Keyboard:** remap every shortcut.
+
+While listening, a question from the other side shows a **Question** tag with an **Answer** button. Each answer shows its estimated cost. Glance follows the macOS light or dark appearance.
+
 Settings > Session > Save notes writes a Markdown file to `~/Documents/Glance/` with a summary, decisions, action items, the transcript and every question asked.
 
 ## How it works
@@ -38,10 +48,10 @@ Settings > Session > Save notes writes a Markdown file to `~/Documents/Glance/` 
 - `src/audio.js`: mic (sox) and system audio (audiotee) capture, speech detection, Whisper transcription.
 - `src/claude.js`: prompts and Claude API calls (`claude-opus-5-5`), error messages, cost estimates.
 - `src/compress.js`: caveman-style compression of the transcript and other text sent on every question.
-- `src/ui/`: the interface. `questions.js` detects questions in the transcript; `highlight.js` colors code.
+- `src/ui/`: the interface. `questions.js` detects questions in the transcript, `markdown.js` renders answers and `highlight.js` colors code.
 
 Settings live in `~/Library/Application Support/glance/config.json`, logs in `~/Library/Logs/Glance/glance.log`.
 
 ## Tests
 
-`npm test` covers compression, question detection, speech segmenting, code highlighting and error messages.
+`npm test` covers compression, question detection, speech segmenting (including background noise and a dying microphone), answer rendering, code highlighting and error messages.

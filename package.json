@@ -1,7 +1,7 @@
 {
   "name": "glance",
   "version": "1.0.0",
-  "description": "",
+  "description": "macOS overlay that answers questions about your screen and calls with Claude, and saves meeting notes",
   "main": "src/main.js",
   "scripts": {
     "test": "node --test test/*.test.js",
@@ -9,9 +9,6 @@
     "package": "electron-packager . Glance --platform=darwin --arch=arm64 --app-bundle-id=com.glance.overlay --out=dist --overwrite --ignore='^/dist' --ignore='^/build' --ignore='^/test' --ignore='^/README.md' --asar.unpackDir='{models,node_modules/audiotee/bin}' --extend-info=build/extra.plist && codesign --force --deep --sign - --requirements '=designated => identifier \"com.glance.overlay\"' dist/Glance-darwin-arm64/Glance.app",
     "dev": "electron ."
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
   "type": "module",
   "dependencies": {
     "@anthropic-ai/sdk": "^1.3.0",
@@ -21,5 +18,6 @@
     "@electron/packager": "^20.3.0",
     "electron": "^45.1.0"
   },
-  "productName": "Glance"
+  "productName": "Glance",
+  "private": true
 }

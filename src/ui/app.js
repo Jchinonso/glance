@@ -276,7 +276,8 @@ function hasSeenAnswer() {
 
 function submit() {
   if (state.busy) return g.cancel();
-  const q = $("question").value;
+  // Nothing typed but a question was just heard: answer exactly that one.
+  const q = $("question").value.trim() || (state.listening && pendingQuestion) || "";
   $("question").value = "";
   view = "answers";
   g.ask(q);

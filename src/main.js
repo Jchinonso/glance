@@ -31,7 +31,7 @@ const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
-const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "fast", vocabulary: "", apiKey: null };
+const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", vocabulary: "", apiKey: null };
 const MAX_INSTRUCTIONS = 4000;
 const MAX_SHOTS = 4;
 let config = { ...defaults };
@@ -555,8 +555,9 @@ async function toggleListening() {
   broadcastState();
 }
 
-// "fast" = base.en, "accurate" = small.en (about 2x slower, better with
-// accents and noise). Falls back to base.en if the bigger model is missing.
+// "fast" = base.en, "accurate" = small.en (about 2x slower, much better with
+// jargon, accents and noise; still faster than real time on Apple Silicon).
+// Falls back to base.en if the bigger model is missing.
 const TECH_TERMS = "React, Next.js, TypeScript, JavaScript, Node.js, Python, Go, Rust, Java, Postgres, PostgreSQL, MySQL, Redis, MongoDB, Kubernetes, Docker, GraphQL, REST, API, AWS, GCP, Azure, SQL, CI/CD, LeetCode";
 
 function transcriptionOptions() {
