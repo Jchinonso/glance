@@ -118,3 +118,19 @@ export async function compressInstructions(client, text) {
   return msg.content.filter((b) => b.type === "text").map((b) => b.text).join("").trim();
 }
 
+// Turns API failures into plain advice. Most specific class first; the SDK
+// already retries 429/5xx/network errors twice before we see them.
+export function describeError(e) {
+  const text = String(e?.message || e);
+  if (e instanceof Anthropic.AuthenticationError) return "Your API key was rejected. Check it in Settings > Anthropic API key.";
+  if (e instanceof Anthropic.PermissionDeniedError) return "This API key isn't allowed to use Claude Opus 5.5. Check its workspace permissions in the Anthropic console.";
+  if (e instanceof Anthropic.NotFoundError) return "Claude Opus 5.5 isn't available to this API key's organization.";
+  if (e instanceof Anthropic.RateLimitError) return "Too many requests right now. Wait a few seconds and ask again.";
+  if (e?.status === 402 || /credit balance/i.test(text)) return "Your Anthropic account is out of credit. Add some at console.anthropic.com > Billing.";
+  if (e?.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
+  if (e instanceof Anthropic.BadRequestError) return `Claude couldn't process this request: ${e.error?.error?.message || text}`;
+  if (e instanceof Anthropic.InternalServerError) return "Anthropic's service is busy or having trouble. Try again in a moment.";
+  if (e instanceof Anthropic.APIConnectionError) return "Can't reach Anthropic. Check your internet connection.";
+  return text;
+}
+

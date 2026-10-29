@@ -4,7 +4,7 @@ import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } fr
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
-import { ask, compressInstructions, createClient } from "./claude.js";
+import { ask, compressInstructions, createClient, describeError } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -328,7 +328,8 @@ async function runAsk(question) {
     send("answer-end", { id });
   } catch (e) {
     const aborted = e?.name === "APIUserAbortError";
-    send("answer-end", { id, error: aborted ? null : e.message || String(e), aborted });
+    if (!aborted) log("answer failed:", e);
+    send("answer-end", { id, error: aborted ? null : describeError(e), aborted });
   } finally {
     if (current?.id === id) current = null;
     broadcastState();
@@ -389,7 +390,7 @@ async function compressSavedInstructions(text) {
     }
   } catch (e) {
     log("compress failed:", e);
-    send("notice", { level: "warn", text: `Saved, but compression failed (${e.message}). They're sent as written.` });
+    send("notice", { level: "warn", text: `Saved, but compression failed: ${describeError(e)} They're sent as written.` });
   }
 }
 
