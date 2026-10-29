@@ -4,7 +4,7 @@
   "description": "",
   "main": "src/main.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "node --test test/*.test.js",
     "start": "open dist/Glance-darwin-arm64/Glance.app",
     "package": "electron-packager . Glance --platform=darwin --arch=arm64 --app-bundle-id=com.glance.overlay --out=dist --overwrite --ignore='^/dist' --ignore='^/build' --asar.unpackDir='{models,node_modules/audiotee/bin}' --extend-info=build/extra.plist && codesign --force --deep --sign - --requirements '=designated => identifier \"com.glance.overlay\"' dist/Glance-darwin-arm64/Glance.app",
     "dev": "electron ."
