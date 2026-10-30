@@ -33,7 +33,7 @@ const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
-const defaults = { model: DEFAULT_MODEL, effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", micMode: "normal", vocabulary: "", apiKey: null };
+const defaults = { model: DEFAULT_MODEL, effort: "low", invisible: true, autoScreen: true, style: "brief", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", micMode: "normal", vocabulary: "", apiKey: null };
 const MAX_INSTRUCTIONS = 5000; // characters; the form reads this from state
 const MAX_SHOTS = 4;
 let config = { ...defaults };
@@ -156,7 +156,7 @@ function state() {
     style: config.style,
     customInstructions: config.customInstructions,
     compressedInstructions: config.compressedInstructions,
-    sentInstructions: caveman(config.compressedInstructions || config.customInstructions),
+    sentInstructions: sentInstructions(),
     maxInstructions: MAX_INSTRUCTIONS,
     transcription: config.transcription,
     micMode: config.micMode,
@@ -426,7 +426,7 @@ async function runAsk(question, { heard = false } = {}) {
     screenshots,
     effort: config.effort,
     style: config.style,
-    customInstructions: config.compressedInstructions || config.customInstructions,
+    customInstructions: sentInstructions(),
     onText: (delta) => {
       text += delta;
       send("answer-delta", { id, text: delta });
@@ -495,6 +495,11 @@ async function snapAndAsk(question) {
 // call each time and save nothing.
 const MIN_COMPRESS_CHARS = 300;
 const approxTokens = (text) => Math.ceil(text.trim().length / 4);
+
+// What Claude receives: the LLM-compressed version as is, or the original
+// through the free mechanical pass. Never both, so a compressed version isn't
+// mangled again.
+const sentInstructions = () => config.compressedInstructions || caveman(config.customInstructions);
 
 async function compressSavedInstructions(text) {
   if (!text.trim()) return send("notice", { level: "ok", text: "Custom instructions cleared." });
