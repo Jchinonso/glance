@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
 import { caveman } from "./compress.js";
+import { isBackchannel, isEcho, isPromptHallucination } from "./transcript.js";
 import { ask, compressInstructions, createClient, describeError, isFallbackUnsupported, summarizeSession, usageCost } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -32,7 +33,7 @@ const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
-const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", vocabulary: "", apiKey: null };
+const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", micMode: "normal", vocabulary: "", apiKey: null };
 const MAX_INSTRUCTIONS = 5000; // characters; the form reads this from state
 const MAX_SHOTS = 4;
 let config = { ...defaults };
@@ -156,6 +157,7 @@ function state() {
     sentInstructions: caveman(config.compressedInstructions || config.customInstructions),
     maxInstructions: MAX_INSTRUCTIONS,
     transcription: config.transcription,
+    micMode: config.micMode,
     vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
     shots: shots.map(({ id, thumb }) => ({ id, thumb })),
@@ -593,6 +595,12 @@ async function toggleListening() {
 // Falls back to base.en if the bigger model is missing.
 const TECH_TERMS = "React, Next.js, TypeScript, JavaScript, Node.js, Python, Go, Rust, Java, Postgres, PostgreSQL, MySQL, Redis, MongoDB, Kubernetes, Docker, GraphQL, REST, API, AWS, GCP, Azure, SQL, CI/CD, LeetCode";
 
+const ECHO_WAIT_MS = 4000;
+
+// "strict" ignores quieter sound reaching the mic from farther away.
+const MIC_LEVELS = { off: null, normal: 0, strict: 1200 };
+const micLevel = () => (config.micMode in MIC_LEVELS ? MIC_LEVELS[config.micMode] : 0);
+
 function transcriptionOptions() {
   const model = (name) => unpacked(path.join(here, "..", "models", `ggml-${name}.bin`));
   const accurate = config.transcription === "accurate" && existsSync(model("small.en"));
@@ -606,11 +614,26 @@ function transcriptionOptions() {
 function createListener() {
   const l = new Listener({
     ...transcriptionOptions(),
+    micLevel: micLevel(),
     audioteePath: unpacked(path.join(here, "..", "node_modules", "audiotee", "bin", "audiotee")),
   });
-  l.on("line", (line) => {
-    transcript.push(line); // kept whole for notes; only the tail goes to Claude
+  const keep = (line) => {
+    // Kept whole for notes, in spoken order; only the tail goes to Claude.
+    let i = transcript.length;
+    while (i > 0 && transcript[i - 1].at > line.at) i--;
+    transcript.splice(i, 0, line);
     send("transcript", line);
+  };
+  l.on("line", (line) => {
+    if (isBackchannel(line.text)) return;
+    if (isPromptHallucination(line.text, [...TECH_TERMS.split(", "), ...config.vocabulary.split(",")])) return;
+    if (line.role !== "me") return keep(line);
+    // The mic hears the speakers. Both sides share one transcription queue, so
+    // wait for the other side's matching line before judging an echo.
+    setTimeout(() => {
+      const recentThem = transcript.filter((l) => l.role === "them" && Math.abs(line.at - l.at) < 20000).map((l) => l.text).join(" ");
+      if (!isEcho(line.text, recentThem)) keep(line);
+    }, ECHO_WAIT_MS);
   });
   l.on("error", (text) => send("notice", { level: "error", text }));
   // Capture stopped on its own (device unplugged, permission revoked).
@@ -740,7 +763,10 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   if (name === "effort" && ["low", "medium", "high"].includes(value)) config.effort = value;
   else if (name === "autoScreen") config.autoScreen = !!value;
   else if (name === "style" && ["brief", "natural"].includes(value)) config.style = value;
-  else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
+  else if (name === "micMode" && value in MIC_LEVELS) {
+    config.micMode = value;
+    listener?.setMicLevel(micLevel());
+  } else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
     config.transcription = value;
     listener?.setTranscription(transcriptionOptions());
   } else if (name === "vocabulary") {

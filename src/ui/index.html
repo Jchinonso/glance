@@ -89,6 +89,14 @@
                 <button role="radio" data-value="accurate">Accurate</button>
               </div>
             </div>
+            <div class="row">
+              <div class="row-text"><span>Your microphone</span><small>Strict ignores voices farther from the mic, like a TV or someone across the room</small></div>
+              <div class="seg" id="micMode" role="radiogroup">
+                <button role="radio" data-value="off">Off</button>
+                <button role="radio" data-value="normal">Normal</button>
+                <button role="radio" data-value="strict">Strict</button>
+              </div>
+            </div>
             <label class="row stacked" for="vocabularyInput">
               <div class="row-text"><span>Words to recognize</span><small>Names, products and jargon Glance should listen for, separated by commas</small></div>
               <input id="vocabularyInput" maxlength="500" placeholder="e.g. Chinonso, KenchiOps, pgvector" spellcheck="false" />

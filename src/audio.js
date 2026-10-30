@@ -19,8 +19,11 @@ const FLOOR_WINDOW_FRAMES = 167; // ~5 s of history for the noise floor
 // speech always has pauses, so this tracks the room even when it gets louder
 // (a fan, music), which a silence-only estimate never notices.
 export class Segmenter extends EventEmitter {
-  constructor() {
+  // minLevel: frames quieter than this never count as speech. The mic uses it
+  // in "strict" mode to ignore distant voices (a TV, someone across the room).
+  constructor({ minLevel = 0 } = {}) {
     super();
+    this.minLevel = minLevel;
     this.pending = Buffer.alloc(0);
     this.preRoll = [];
     this.frames = [];
@@ -51,7 +54,7 @@ export class Segmenter extends EventEmitter {
     this.history.push(rms);
     if (this.history.length > FLOOR_WINDOW_FRAMES) this.history.shift();
     this.floor = this.floor * 0.9 + Math.min(...this.history) * 0.1;
-    const isSpeech = rms > this.floor * 2.5 + 150;
+    const isSpeech = rms > Math.max(this.floor * 2.5 + 150, this.minLevel);
     if (isSpeech) this.lastSpeechAt = Date.now();
 
     const copy = Buffer.from(buf);
@@ -125,7 +128,8 @@ export async function whisper({ modelPath, binary, prompt }, pcm) {
   return new Promise((resolve) => {
     execFile(
       binary,
-      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-t", "4", ...(prompt ? ["--prompt", prompt] : [])],
+      // -sns suppresses non-speech tokens, which cuts invented text on noise.
+      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-sns", "-t", "4", ...(prompt ? ["--prompt", prompt] : [])],
       { timeout: 30000 },
       (err, stdout) => {
         unlink(file).catch(() => {});
@@ -149,8 +153,10 @@ function findBinary(name) {
 // Captures the mic ("me") and macOS system audio ("them"), segments speech,
 // and emits transcript lines. Transcription runs one segment at a time.
 export class Listener extends EventEmitter {
-  constructor({ modelPath, prompt, audioteePath, whisperBinary = findBinary("whisper-cli"), soxBinary = findBinary("rec") }) {
+  // micLevel: null = don't capture the mic at all; otherwise the Segmenter minLevel.
+  constructor({ modelPath, prompt, micLevel = 0, audioteePath, whisperBinary = findBinary("whisper-cli"), soxBinary = findBinary("rec") }) {
     super();
+    this.micLevel = micLevel;
     this.audioteePath = audioteePath;
     this.opts = { modelPath, prompt, binary: whisperBinary };
     this.soxBinary = soxBinary;
@@ -174,7 +180,7 @@ export class Listener extends EventEmitter {
       return false;
     }
     this.running = true;
-    this.me = new Segmenter();
+    this.me = new Segmenter({ minLevel: this.micLevel ?? 0 });
     this.them = new Segmenter();
     this.me.on("segment", (pcm) => {
       // Without headphones the mic hears the speakers; skip echo of "them".
@@ -183,6 +189,16 @@ export class Listener extends EventEmitter {
     });
     this.them.on("segment", (pcm) => this.enqueue("them", pcm));
 
+    if (this.micLevel !== null) this.startMic();
+
+    this.tee = new AudioTee({ sampleRate: SAMPLE_RATE, chunkDurationMs: 100, binaryPath: this.audioteePath });
+    this.tee.on("data", ({ data }) => this.them.push(data));
+    this.tee.on("error", (e) => this.emit("error", `System audio failed: ${e.message}`));
+    this.tee.start().catch((e) => this.emit("error", `System audio failed: ${e.message}`));
+    return true;
+  }
+
+  startMic() {
     this.mic = spawn(this.soxBinary, ["-q", "-c", "1", "-r", String(SAMPLE_RATE), "-b", "16", "-e", "signed-integer", "-t", "raw", "-"]);
     this.mic.stdout.on("data", (d) => this.me.push(d));
     this.mic.on("error", (e) => this.emit("error", `Mic capture failed: ${e.message}`));
@@ -194,12 +210,20 @@ export class Listener extends EventEmitter {
       this.stop();
       this.emit("ended");
     });
+  }
 
-    this.tee = new AudioTee({ sampleRate: SAMPLE_RATE, chunkDurationMs: 100, binaryPath: this.audioteePath });
-    this.tee.on("data", ({ data }) => this.them.push(data));
-    this.tee.on("error", (e) => this.emit("error", `System audio failed: ${e.message}`));
-    this.tee.start().catch((e) => this.emit("error", `System audio failed: ${e.message}`));
-    return true;
+  // Off/normal/strict while running: start or stop the mic, or change its threshold.
+  setMicLevel(level) {
+    this.micLevel = level;
+    if (!this.running) return;
+    if (level === null) {
+      const mic = this.mic;
+      this.mic = null;
+      mic?.kill("SIGTERM");
+    } else {
+      this.me.minLevel = level;
+      if (!this.mic) this.startMic();
+    }
   }
 
   // Takes effect from the next segment; no restart needed.

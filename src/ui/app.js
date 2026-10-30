@@ -110,6 +110,7 @@ function renderMenu() {
   $("instructionsMeta").textContent = state.customInstructions?.trim() ? "on" : "off";
   $("keyMeta").textContent = state.keyHint ? `ends in ${state.keyHint}` : "not set";
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
+  for (const b of $("micMode").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.micMode));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
   for (const b of $("style").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.style));
@@ -431,6 +432,10 @@ $("copyBtn").addEventListener("click", () => {
 $("effort").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (v) g.setSetting("effort", v);
+});
+$("micMode").addEventListener("click", (e) => {
+  const v = e.target.closest("button")?.dataset.value;
+  if (v) g.setSetting("micMode", v);
 });
 $("transcription").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
