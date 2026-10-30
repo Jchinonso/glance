@@ -377,7 +377,9 @@ async function captureScreen() {
   }
 }
 
-async function runAsk(question) {
+// heard: the question came from the call transcript, so an automatic screenshot
+// would only add tokens.
+async function runAsk(question, { heard = false } = {}) {
   if (current) current.abort();
   const key = apiKey();
   if (!key) {
@@ -396,7 +398,7 @@ async function runAsk(question) {
   // Screenshots the user attached win; otherwise grab the screen now if enabled.
   let screenshots = shots.map((s) => s.data);
   shots = [];
-  if (!screenshots.length && config.autoScreen) {
+  if (!screenshots.length && config.autoScreen && !heard) {
     try {
       screenshots = [(await captureScreen()).data];
     } catch (e) {
@@ -598,7 +600,9 @@ const TECH_TERMS = "React, Next.js, TypeScript, JavaScript, Node.js, Python, Go,
 const ECHO_WAIT_MS = 4000;
 
 // "strict" ignores quieter sound reaching the mic from farther away.
-const MIC_LEVELS = { off: null, normal: 0, strict: 1200 };
+// Normal still ignores very faint sound: that's where invented text and distant
+// room audio come from, while speech into the mic is far louder.
+const MIC_LEVELS = { off: null, normal: 250, strict: 1200 };
 const micLevel = () => (config.micMode in MIC_LEVELS ? MIC_LEVELS[config.micMode] : 0);
 
 function transcriptionOptions() {
@@ -741,7 +745,7 @@ ipcMain.handle("pause-shortcuts", (_e, paused) => {
 });
 
 ipcMain.handle("get-state", () => ({ ...state(), transcript: transcript.slice(-TRANSCRIPT_SYNC) }));
-ipcMain.handle("ask", (_e, question) => runAsk(question));
+ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard }));
 ipcMain.handle("cancel", () => current?.abort());
 ipcMain.handle("toggle-listening", () => toggleListening());
 ipcMain.handle("set-api-key", (_e, key) => {

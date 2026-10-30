@@ -281,11 +281,13 @@ function hasSeenAnswer() {
 
 function submit() {
   if (state.busy) return g.cancel();
-  // Nothing typed but a question was just heard: answer exactly that one.
-  const q = $("question").value.trim() || (state.listening && pendingQuestion) || "";
+  // Nothing typed but a question was just heard: answer exactly that one. It
+  // came from the call, so the screen isn't attached unless asked for.
+  const typed = $("question").value.trim();
+  const heard = !typed && state.listening && pendingQuestion;
   $("question").value = "";
   view = "answers";
-  g.ask(q);
+  g.ask(typed || heard || "", { heard: !!heard });
 }
 
 g.on("state", (s) => {

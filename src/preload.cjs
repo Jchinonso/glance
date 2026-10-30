@@ -10,7 +10,7 @@ contextBridge.exposeInMainWorld("glance", {
     return () => ipcRenderer.off(channel, listener);
   },
   getState: () => ipcRenderer.invoke("get-state"),
-  ask: (question) => ipcRenderer.invoke("ask", question),
+  ask: (question, options) => ipcRenderer.invoke("ask", question, options),
   cancel: () => ipcRenderer.invoke("cancel"),
   toggleListening: () => ipcRenderer.invoke("toggle-listening"),
   setApiKey: (key) => ipcRenderer.invoke("set-api-key", key),

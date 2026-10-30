@@ -288,7 +288,7 @@ button.row:hover { background: var(--raise); }
   user-select: text;
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
 }
-body.settings-open .stage { max-height: 640px; }
+body.settings-open .stage { max-height: 520px; }
 .stage.scrolled {
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px, #000 calc(100% - 22px), transparent);
 }

@@ -73,3 +73,16 @@ test("steady background noise is not mistaken for speech", () => {
   seg.push(noise(1.2, 1500));
   assert.equal(count, fromNoise + 1);
 });
+
+test("a mic floor ignores faint distant sound but keeps normal speech", () => {
+  const seg = new Segmenter({ minLevel: 250 });
+  const out = [];
+  seg.on("segment", (b) => out.push(b.length));
+  seg.push(pcm(0.6, 0));
+  seg.push(pcm(1.5, 300)); // faint: a TV across the room
+  seg.push(pcm(1.2, 0));
+  assert.equal(out.length, 0);
+  seg.push(pcm(1.5, 3000)); // speaking into the mic
+  seg.push(pcm(1.2, 0));
+  assert.equal(out.length, 1);
+});
