@@ -32,7 +32,7 @@ Shortcuts can be changed in Settings > Keyboard. The menu bar icon shows or hide
 
 Settings (the gear) covers:
 
-- **Answers:** depth (Quick, Balanced, Thorough), style (Natural or Brief), custom instructions (compressed automatically when saved), and whether every question includes a screenshot.
+- **Answers:** model (Opus 5.5, Sonnet 5.5 or Haiku 5.5), depth (Quick, Balanced, Thorough), style (Natural or Brief), custom instructions (compressed automatically when saved), and whether every question includes a screenshot.
 - **Listening:** Accurate or Fast transcription, plus words to recognize (names, products, jargon).
 - **Privacy:** hide from screen sharing.
 - **Session:** the transcript, spending so far, Save notes, Clear session.
@@ -46,7 +46,7 @@ Settings > Session > Save notes writes a Markdown file to `~/Documents/Glance/` 
 
 - `src/main.js`: window, shortcuts, screenshots, keychain, notes, logging.
 - `src/audio.js`: mic (sox) and system audio (audiotee) capture, speech detection, Whisper transcription.
-- `src/claude.js`: prompts and Claude API calls (`claude-opus-5-5`), error messages, cost estimates.
+- `src/claude.js`: prompts and Claude API calls (Opus 5.5 by default; Sonnet 5.5 and Haiku 5.5 selectable), error messages, per-model cost estimates. Custom-instruction compression always uses Opus.
 - `src/compress.js`: caveman-style compression of the transcript and other text sent on every question.
 - `src/ui/`: the interface. `questions.js` detects questions in the transcript, `markdown.js` renders answers and `highlight.js` colors code.
 

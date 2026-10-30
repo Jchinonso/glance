@@ -11,6 +11,11 @@ let editingInstructions = false;
 let settingsOpen = false;
 let collapsed = false;
 let pendingQuestion = null;
+const MODEL_HINTS = {
+  "claude-opus-5-5": "Opus 5.5: most capable, $4 / $20 per million tokens",
+  "claude-sonnet-5-5": "Sonnet 5.5: nearly as good, half the price",
+  "claude-haiku-5-5": "Haiku 5.5: fastest, about 1/40 of Opus's price",
+};
 let editingShortcuts = false;
 let recording = null; // action whose shortcut is being recorded
 
@@ -96,12 +101,14 @@ function renderStrip() {
 }
 
 function renderMenu() {
+  for (const b of $("model").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.model));
+  $("modelHint").textContent = MODEL_HINTS[state.model] || "";
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
   const sp = state.spend || { input: 0, output: 0, dollars: 0 };
   $("spendTotal").textContent = sp.dollars ? `about ${formatDollars(sp.dollars)}` : "";
   $("spendMeta").textContent = sp.dollars
-    ? `${sp.input.toLocaleString()} tokens in, ${sp.output.toLocaleString()} out, at Opus 5.5 list prices`
+    ? `${sp.input.toLocaleString()} tokens in, ${sp.output.toLocaleString()} out, at list prices`
     : "Nothing spent yet";
   $("saveNotesBtn").disabled = !!state.savingNotes;
   $("saveNotesMeta").textContent = state.savingNotes ? "Writing your notes…" : "Summary, decisions, action items and full transcript, to Documents/Glance";
@@ -177,7 +184,7 @@ function renderStage() {
     $("answerQ").textContent = a.question || "Help with what's on screen";
     $("answerBody").innerHTML = renderMarkdown(a.text) + (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "");
     $("answerUsage").hidden = !a.usage;
-    if (a.usage) $("answerUsage").textContent = `About ${formatDollars(a.usage.cost)} for this answer (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
+    if (a.usage) $("answerUsage").textContent = `About ${formatDollars(a.usage.cost)} with ${a.usage.model || "Claude"} (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
   }
 
   document.querySelector(".dock").hidden = needsKey || instr || settings || shortcutsOpen;
@@ -430,6 +437,10 @@ $("copyBtn").addEventListener("click", () => {
   g.writeClipboard(a.text);
   $("copyBtn").classList.add("done");
   setTimeout(() => $("copyBtn").classList.remove("done"), 1400);
+});
+$("model").addEventListener("click", (e) => {
+  const v = e.target.closest("button")?.dataset.value;
+  if (v) g.setSetting("model", v);
 });
 $("effort").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
 import { caveman } from "./compress.js";
 import { isBackchannel, isEcho, isPromptHallucination } from "./transcript.js";
-import { ask, compressInstructions, createClient, describeError, isFallbackUnsupported, summarizeSession, usageCost } from "./claude.js";
+import { ask, compressInstructions, createClient, DEFAULT_MODEL, describeError, isFallbackUnsupported, MODELS, summarizeSession, usageCost } from "./claude.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -33,7 +33,7 @@ const TRANSCRIPT_LIMIT = 60; // lines sent to Claude
 const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 
-const defaults = { effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", micMode: "normal", vocabulary: "", apiKey: null };
+const defaults = { model: DEFAULT_MODEL, effort: "low", invisible: true, autoScreen: true, style: "natural", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", micMode: "normal", vocabulary: "", apiKey: null };
 const MAX_INSTRUCTIONS = 5000; // characters; the form reads this from state
 const MAX_SHOTS = 4;
 let config = { ...defaults };
@@ -51,9 +51,9 @@ let nextShotId = 1;
 let useFallback = true; // off for the session if the account lacks the feature
 let spend = { input: 0, output: 0, dollars: 0 }; // this session, all calls
 
-function addUsage(u) {
+function addUsage(u, model = DEFAULT_MODEL) {
   if (!u) return 0;
-  const cost = usageCost(u);
+  const cost = usageCost(u, model);
   spend = {
     input: spend.input + (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0),
     output: spend.output + (u.output_tokens || 0),
@@ -150,6 +150,8 @@ function state() {
     listening,
     listeningSince,
     invisible: config.invisible,
+    model: config.model,
+    models: Object.entries(MODELS).map(([id, m]) => ({ id, name: m.name })),
     effort: config.effort,
     style: config.style,
     customInstructions: config.customInstructions,
@@ -413,8 +415,10 @@ async function runAsk(question, { heard = false } = {}) {
   }
 
   let text = "";
+  const model = config.model;
   const start = () => ask({
     client,
+    model,
     fallback: useFallback,
     question: q,
     transcript: transcript.slice(-TRANSCRIPT_LIMIT),
@@ -445,13 +449,13 @@ async function runAsk(question, { heard = false } = {}) {
     const { msg, problem } = result;
     if (text) answers.push({ question: q, answer: text });
     const u = msg.usage || {};
-    const cost = addUsage(u);
+    const cost = addUsage(u, model);
     const tokensIn = (u.input_tokens || 0) + (u.cache_read_input_tokens || 0) + (u.cache_creation_input_tokens || 0);
-    send("answer-end", { id, error: problem, usage: { input: tokensIn, output: u.output_tokens || 0, cost } });
+    send("answer-end", { id, error: problem, usage: { input: tokensIn, output: u.output_tokens || 0, cost, model: MODELS[model]?.name } });
   } catch (e) {
     const aborted = e?.name === "APIUserAbortError";
     if (!aborted) log("answer failed:", e);
-    send("answer-end", { id, error: aborted ? null : describeError(e), aborted });
+    send("answer-end", { id, error: aborted ? null : describeError(e, model), aborted });
   } finally {
     if (current?.id === id) current = null;
     broadcastState();
@@ -541,10 +545,10 @@ async function saveNotes() {
       send("notice", { level: "ok", text: "Writing your notes…" });
       client ??= createClient(key);
       try {
-        parts.push(await summarizeSession(client, { transcript, answers }, addUsage));
+        parts.push(await summarizeSession(client, { transcript, answers }, (u) => addUsage(u, config.model), config.model));
       } catch (e) {
         log("summary failed:", e);
-        parts.push(`_Summary unavailable: ${describeError(e)}_`);
+        parts.push(`_Summary unavailable: ${describeError(e, config.model)}_`);
       }
     }
     if (transcript.length) {
@@ -764,7 +768,8 @@ ipcMain.handle("set-api-key", (_e, key) => {
   broadcastState();
 });
 ipcMain.handle("set-setting", (_e, name, value) => {
-  if (name === "effort" && ["low", "medium", "high"].includes(value)) config.effort = value;
+  if (name === "model" && value in MODELS) config.model = value;
+  else if (name === "effort" && ["low", "medium", "high"].includes(value)) config.effort = value;
   else if (name === "autoScreen") config.autoScreen = !!value;
   else if (name === "style" && ["brief", "natural"].includes(value)) config.style = value;
   else if (name === "micMode" && value in MIC_LEVELS) {
