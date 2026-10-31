@@ -6,18 +6,18 @@ let heard = []; // transcript lines shown in this window
 let answers = []; // { id, question, text, status: "streaming" | "done" | "error", error }
 let page = -1; // index into answers, -1 when none
 let view = "answers"; // "answers" | "transcript"
-let editingKey = false;
-let editingInstructions = false;
-let editingDoc = null; // "resume" | "jobDescription" while its form is open
-// A panel (resume, instructions, provider, shortcuts, transcript) opened from
-// Settings goes back there when closed, to the same tab.
-let fromSettings = false;
-let editingProfile = false;
+// The one panel covering the answers, or null: "settings", "key" (changing the
+// provider; the key form also shows whenever there's no key), "instructions",
+// "doc" (resume or job description, see docKind), "profile" or "shortcuts".
+// A panel opened from Settings (and the transcript) goes back there when
+// closed, to the same tab.
+let panel = null;
+let backToSettings = false;
+let docKind = null; // "resume" | "jobDescription" while panel is "doc"
 // Setup in progress: { step, needsKey, use }. Null once done or skipped.
 let onboarding = null;
 // The "New interview?" card is showing.
 let askingJob = false;
-let settingsOpen = false;
 let collapsed = false;
 let pendingQuestion = null; // latest question someone else asked, until answered
 // Settings tab, remembered per viewer; settings work without it.
@@ -47,8 +47,17 @@ const MODEL_HINTS = {
   "claude-sonnet-5-5": "Sonnet 5.5: nearly as good, half the price",
   "claude-haiku-5-5": "Haiku 5.5: fastest, about 1/40 of Opus's price",
 };
-let editingShortcuts = false;
 let recording = null; // action whose shortcut is being recorded
+// Answers with key phrases open compact (bold line + phrases) or in full,
+// remembered per viewer.
+let answerView = (() => {
+  try {
+    return localStorage.getItem("glance.answerView") === "full" ? "full" : "compact";
+  } catch {
+    return "compact";
+  }
+})();
+let editingSaid = false; // the "I said something else" field is open
 
 const SHORTCUT_LABELS = {
   snap: "Screenshot and answer",
@@ -203,7 +212,7 @@ function renderShortcutList() {
 }
 
 function renderStage() {
-  for (const b of document.querySelectorAll("[data-back]")) b.hidden = !fromSettings;
+  for (const b of document.querySelectorAll("[data-back]")) b.hidden = !backToSettings;
   // Setup covers everything; its key step uses the key form itself.
   const onb = !!onboarding && onboarding.step !== "key";
   $("onboard").hidden = !onb;
@@ -213,29 +222,29 @@ function renderStage() {
   $("keyStepLabel").hidden = onboarding?.step !== "key";
   $("keyStepBack").hidden = onboarding?.step !== "key";
   if (onboarding?.step === "key") $("keyStepLabel").textContent = stepLabel(onboardingSteps(onboarding), "key");
-  const needsKey = (!state.hasKey || editingKey) && !onb;
+  const needsKey = (!state.hasKey || panel === "key") && !onb;
   $("keyForm").hidden = !needsKey;
   const changing = needsKey && state.hasKey;
   if (needsKey) renderKeyForm(changing);
   // Cancel whenever the form was opened from Settings; Remove only with a key.
-  $("keyManage").hidden = !editingKey;
-  $("cancelKeyBtn").hidden = !editingKey;
+  $("keyManage").hidden = panel !== "key";
+  $("cancelKeyBtn").hidden = panel !== "key";
   $("removeKeyBtn").hidden = !state.keyHint;
-  const shortcutsOpen = !needsKey && editingShortcuts;
+  const shortcutsOpen = !needsKey && panel === "shortcuts";
   $("shortcutsPanel").hidden = !shortcutsOpen;
   if (shortcutsOpen) renderShortcutList();
-  const settings = !needsKey && !onb && !editingInstructions && !editingDoc && !editingProfile && !shortcutsOpen && settingsOpen;
+  const settings = !needsKey && !onb && panel === "settings";
   $("menu").hidden = !settings;
   $("menuBtn").setAttribute("aria-expanded", String(settings));
   $("menuBtn").title = settings ? "Close settings" : "Settings";
   document.body.classList.toggle("settings-open", settings);
-  const instr = !needsKey && editingInstructions;
+  const instr = !needsKey && panel === "instructions";
   $("instructionsForm").hidden = !instr;
   if (instr) updateInstructionsCount();
-  const doc = !needsKey && !!editingDoc;
+  const doc = !needsKey && panel === "doc";
   $("docForm").hidden = !doc;
   if (doc) updateDocCount();
-  const prof = !needsKey && !onb && editingProfile;
+  const prof = !needsKey && !onb && panel === "profile";
   $("profileForm").hidden = !prof;
   const covered = needsKey || onb || instr || doc || prof || settings || shortcutsOpen;
   $("jdCard").hidden = !askingJob || covered;
@@ -257,7 +266,26 @@ function renderStage() {
   if (a && !$("answer").hidden) {
     $("answer").classList.toggle("streaming", a.status === "streaming");
     $("answerQ").textContent = a.question || "Help with what's on screen";
-    $("answerBody").innerHTML = renderMarkdown(a.text) + (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "");
+    const { text: body, keys } = splitKeys(a.text);
+    const compact = keys.length > 0 && answerView === "compact";
+    const first = body.split("\n").find((l) => l.trim()) || "";
+    // The note (details Glance added, to check) shows in both views.
+    const note = body.trim().split("\n").at(-1);
+    const noteMd = /^\*[^*].*\*$/.test(note?.trim() || "") && note !== first ? renderMarkdown(note) : "";
+    $("answerBody").innerHTML =
+      (compact ? `${renderMarkdown(first)}<ul class="keys">${keys.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>${noteMd}` : renderMarkdown(body)) +
+      (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "");
+    $("viewToggle").hidden = !keys.length;
+    $("viewToggle").textContent = compact ? "Full answer" : "Key points";
+    $("viewToggle").title = compact ? "Show the whole answer to say" : "Show only the key points";
+    // Interview answers only: what the user actually said goes with later questions.
+    const saidable = a.status === "done" && !a.error && state.style === "interview";
+    $("saidBox").hidden = !saidable && !a.said;
+    $("saidOpen").hidden = editingSaid;
+    $("saidOpen").textContent = a.said ? "Edit what you said" : "I said something else";
+    $("saidText").hidden = !a.said || editingSaid;
+    if (a.said) $("saidText").innerHTML = `You said: <strong>${escapeHtml(a.said)}</strong>. Follow-ups build on this.`;
+    $("saidForm").hidden = !editingSaid;
     $("answerUsage").hidden = !a.usage;
     if (a.usage) $("answerUsage").textContent = `${a.usage.cost != null ? `About ${formatDollars(a.usage.cost)} with` : "With"} ${a.usage.model || "the model"} (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
   }
@@ -354,10 +382,11 @@ function snapSubmit() {
   g.snapAsk(q);
 }
 
+// Opening Settings replaces any other panel.
 function setMenu(open) {
-  settingsOpen = open;
-  if (open) editingInstructions = false;
-  if (open) editingDoc = null;
+  if (open) panel = "settings";
+  else if (panel === "settings") panel = null;
+  backToSettings = false;
   render();
   $("stage").scrollTop = 0;
 }
@@ -406,14 +435,16 @@ g.on("snap-submit", snapSubmit);
 
 g.on("answer-start", ({ id, question }) => {
   answers.push({ id, question, text: "", status: "streaming" });
+  editingSaid = false;
   page = answers.length - 1;
+  if (view === "transcript") backToSettings = false;
   view = "answers";
-  settingsOpen = false;
+  if (panel === "settings") panel = null;
   pendingQuestion = null;
   setCollapsed(false);
   // Asked by shortcut while a form is open: keep what's typed there, but say
   // where the answer is.
-  if (editingInstructions || editingDoc || editingProfile || editingShortcuts || (editingKey && state.hasKey)) {
+  if (panel) {
     showNotice({ level: "ok", text: "Answering behind this form. Close it to see the answer." });
   }
   renderStrip();
@@ -492,14 +523,12 @@ $("keyForm").addEventListener("submit", (e) => {
     if (model !== state.openaiModel) g.setSetting("openaiModel", model);
   } else if (!key && !state.keyHint) return;
   if (key) g.setApiKey(key);
-  $("keyInput").value = "";
-  editingKey = false;
-  keyFormFor = null;
-  finishPanel();
+  closePanel();
 });
 $("cancelKeyBtn").addEventListener("click", closePanel);
+// With no key left, the key form stays up until a new one is saved.
 $("removeKeyBtn").addEventListener("click", () => {
-  editingKey = false;
+  panel = null;
   $("keyInput").value = "";
   g.setApiKey("");
 });
@@ -511,18 +540,13 @@ $("pasteKeyBtn").addEventListener("click", async () => {
 $("listenBtn").addEventListener("click", () => g.toggleListening());
 $("menuBtn").addEventListener("click", () => {
   setCollapsed(false);
-  setMenu(!settingsOpen);
+  setMenu(panel !== "settings");
 });
 $("saveNotesBtn").addEventListener("click", () => {
   setMenu(false);
   g.saveNotes();
 });
-$("shortcutsBtn").addEventListener("click", () => {
-  fromSettings = settingsOpen;
-  settingsOpen = false;
-  editingShortcuts = true;
-  render();
-});
+$("shortcutsBtn").addEventListener("click", () => openPanel("shortcuts"));
 function stopRecording() {
   if (!recording) return;
   recording = null;
@@ -557,18 +581,43 @@ document.addEventListener(
 );
 $("shortcutsReset").addEventListener("click", () => g.resetShortcuts());
 $("shortcutsDone").addEventListener("click", () => {
-  stopRecording();
-  editingShortcuts = false;
-  finishPanel();
+  closePanel();
 });
 $("collapseBtn").addEventListener("click", () => setCollapsed(!collapsed));
 $("hideTopBtn").addEventListener("click", () => g.hide());
 $("copyBtn").addEventListener("click", () => {
   const a = answers[page];
   if (!a?.text) return;
-  g.writeClipboard(a.text);
+  g.writeClipboard(splitKeys(a.text).text.trim());
   $("copyBtn").classList.add("done");
   setTimeout(() => $("copyBtn").classList.remove("done"), 1400);
+});
+$("viewToggle").addEventListener("click", () => {
+  answerView = answerView === "compact" ? "full" : "compact";
+  try {
+    localStorage.setItem("glance.answerView", answerView);
+  } catch {}
+  renderStage();
+});
+// Clicking the key phrases opens the full answer.
+$("answerBody").addEventListener("click", (e) => {
+  if (e.target.closest(".keys")) $("viewToggle").click();
+});
+$("saidOpen").addEventListener("click", () => {
+  editingSaid = true;
+  $("saidInput").value = answers[page]?.said || "";
+  renderStage();
+  $("saidInput").focus();
+});
+$("saidForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  const a = answers[page];
+  editingSaid = false;
+  if (a) {
+    a.said = $("saidInput").value.trim();
+    g.setSaid(a.id, a.said);
+  }
+  renderStage();
 });
 $("model").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
@@ -607,9 +656,11 @@ $("shots").addEventListener("click", (e) => {
   if (id) g.removeShot(id);
 });
 $("transcriptToggle").addEventListener("click", () => {
-  fromSettings = settingsOpen;
+  backToSettings = panel === "settings";
+  panel = null;
   view = "transcript";
-  setMenu(false);
+  render();
+  $("stage").scrollTop = 0;
 });
 $("clearBtn").addEventListener("click", () => {
   g.clear();
@@ -664,32 +715,26 @@ function updateDocCount() {
   $("docCount").textContent = `${text.length.toLocaleString()} of ${max.toLocaleString()} characters, about ${approxTokens(text)} tokens`;
 }
 function openDoc(kind) {
-  fromSettings = settingsOpen;
-  settingsOpen = false;
-  editingDoc = kind;
+  docKind = kind;
   const d = DOCS[kind];
   $("docLead").textContent = d.lead;
   $("docHint").textContent = d.hint;
   $("docInput").placeholder = d.placeholder;
   $("docInput").value = state[kind] || "";
-  render();
-  $("stage").scrollTop = 0;
+  openPanel("doc");
   // Start at the top (the name and summary), not the end.
   $("docInput").focus();
   $("docInput").setSelectionRange(0, 0);
   $("docInput").scrollTop = 0;
 }
-function closeDoc() {
-  editingDoc = null;
-  finishPanel();
-}
+const closeDoc = () => closePanel();
 $("resumeBtn").addEventListener("click", () => openDoc("resume"));
 $("jobBtn").addEventListener("click", () => openDoc("jobDescription"));
 $("docInput").addEventListener("input", updateDocCount);
 $("docImport").addEventListener("click", async () => {
-  const kind = editingDoc;
+  const kind = docKind;
   const r = await g.importDoc(kind);
-  if (!r || editingDoc !== kind) return;
+  if (!r || panel !== "doc" || docKind !== kind) return;
   if (r.error) return showNotice({ level: "error", text: r.error });
   $("docInput").value = r.text;
   updateDocCount();
@@ -698,7 +743,7 @@ $("docImport").addEventListener("click", async () => {
 });
 $("docForm").addEventListener("submit", (e) => {
   e.preventDefault();
-  g.setSetting(editingDoc, $("docInput").value);
+  g.setSetting(docKind, $("docInput").value);
   closeDoc();
 });
 $("docCancel").addEventListener("click", closeDoc);
@@ -708,48 +753,35 @@ $("docClear").addEventListener("click", () => {
   $("docInput").focus();
 });
 
-function closeInstructions() {
-  editingInstructions = false;
-  finishPanel();
-}
-// Back to Settings if the panel came from there, otherwise to the answers.
-function finishPanel() {
-  if (fromSettings) {
-    fromSettings = false;
-    settingsOpen = true;
-  }
+const closeInstructions = () => closePanel();
+// Opens a panel over the answers; one opened from Settings returns there.
+function openPanel(name) {
+  backToSettings = panel === "settings";
+  panel = name;
   render();
   $("stage").scrollTop = 0;
 }
-// Closes whichever panel is open, as Back, Cancel and Esc do.
+// Closes whichever panel is open, as Save, Back, Cancel and Esc do: back to
+// Settings if it came from there, otherwise to the answers.
 function closePanel() {
-  if (editingShortcuts) {
-    stopRecording();
-    editingShortcuts = false;
-  }
-  if (editingKey && state.hasKey) {
-    editingKey = false;
+  if (panel === "shortcuts") stopRecording();
+  if (panel === "key") {
     keyFormFor = null;
     $("keyInput").value = "";
   }
-  editingInstructions = false;
-  editingDoc = null;
-  editingProfile = false;
   if (view === "transcript") view = "answers";
-  finishPanel();
+  panel = backToSettings ? "settings" : null;
+  backToSettings = false;
+  render();
+  $("stage").scrollTop = 0;
 }
-const panelOpen = () => editingShortcuts || editingInstructions || !!editingDoc || editingProfile || (editingKey && state.hasKey) || view === "transcript";
+const panelOpen = () => (!!panel && panel !== "settings") || view === "transcript";
 document.addEventListener("click", (e) => {
   if (e.target.closest("[data-back]")) closePanel();
 });
 $("instructionsBtn").addEventListener("click", () => {
-  fromSettings = settingsOpen;
-  settingsOpen = false;
-  editingInstructions = true;
   $("instructionsInput").value = state.customInstructions || "";
-  updateInstructionsCount();
-  setMenu(false);
-  render();
+  openPanel("instructions");
   $("instructionsInput").focus();
 });
 $("instructionsInput").addEventListener("input", updateInstructionsCount);
@@ -766,12 +798,8 @@ $("instructionsClear").addEventListener("click", () => {
 });
 $("openaiModelRow").addEventListener("click", () => $("keyBtn").click());
 $("keyBtn").addEventListener("click", () => {
-  fromSettings = settingsOpen;
-  settingsOpen = false;
-  editingKey = true;
   keyFormFor = null;
-  setMenu(false);
-  render();
+  openPanel("key");
   $("keyInput").focus();
 });
 $("quitBtn").addEventListener("click", () => g.quit());
@@ -819,10 +847,12 @@ document.addEventListener("click", (e) => {
 $("cloakFix").addEventListener("click", () => g.setSetting("invisible", true));
 $("jdCloakFix").addEventListener("click", () => g.setSetting("invisible", true));
 $("prevBtn").addEventListener("click", () => {
+  editingSaid = false;
   page = Math.max(0, page - 1);
   renderStage();
 });
 $("nextBtn").addEventListener("click", () => {
+  editingSaid = false;
   page = Math.min(answers.length - 1, page + 1);
   renderStage();
 });
@@ -880,8 +910,12 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
     if (onboarding) return; // setup has its own Back and Skip setup
     if (!$("modeMenu").hidden) return setModeMenu(false);
+    if (editingSaid) {
+      editingSaid = false;
+      return renderStage();
+    }
     if (panelOpen()) closePanel();
-    else if (settingsOpen) setMenu(false);
+    else if (panel === "settings") setMenu(false);
     else g.hide();
   }
 });
@@ -900,8 +934,8 @@ new MutationObserver(fit).observe($("glass"), { subtree: true, attributes: true,
 // and from Settings > General > Show welcome again.
 function startOnboarding() {
   g.setSetting("setupActive", true);
-  settingsOpen = false;
-  editingKey = false;
+  panel = null;
+  backToSettings = false;
   onboarding = {
     step: "welcome",
     needsKey: !state.hasKey,
@@ -1030,14 +1064,11 @@ $("jdNew").addEventListener("click", () => {
 
 // Your details (Settings > Interview).
 $("profileBtn").addEventListener("click", () => {
-  fromSettings = settingsOpen;
-  settingsOpen = false;
-  editingProfile = true;
   $("pfName").value = state.profileName || "";
   $("pfSalary").value = state.salary || "";
   $("pfVisa").value = state.visa || "";
   $("pfNotice").value = state.notice || "";
-  render();
+  openPanel("profile");
   $("pfName").focus();
 });
 $("profileForm").addEventListener("submit", (e) => {
@@ -1046,8 +1077,7 @@ $("profileForm").addEventListener("submit", (e) => {
     const v = $(id).value.trim();
     if (v !== (state[name] || "")) g.setSetting(name, v);
   }
-  editingProfile = false;
-  finishPanel();
+  closePanel();
 });
 $("profileCancel").addEventListener("click", closePanel);
 

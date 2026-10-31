@@ -8,13 +8,20 @@ import { Listener } from "./audio.js";
 import { caveman, keepsFacts } from "./compress.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
-import { ask, compressInstructions, describeError, summarizeSession } from "./assistant.js";
+import { ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
 import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, PROVIDERS } from "./providers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
 // unpacked copy, not from inside app.asar.
 const unpacked = (p) => p.replace(`app.asar${path.sep}`, `app.asar.unpacked${path.sep}`);
+// GLANCE_TEST_DIR (UI tests): settings and logs in that folder, no keychain,
+// no global shortcuts, and a see-through window that never takes focus.
+const TEST_DIR = process.env.GLANCE_TEST_DIR;
+if (TEST_DIR) {
+  app.setPath("userData", TEST_DIR);
+  app.setAppLogsPath(path.join(TEST_DIR, "logs"));
+}
 const configPath = path.join(app.getPath("userData"), "config.json");
 const logPath = path.join(app.getPath("logs"), "glance.log");
 
@@ -101,6 +108,7 @@ function canAsk() {
 const KEYCHAIN = { service: "com.glance.overlay.api-key", accounts: { anthropic: "glance", openai: "openai" } };
 
 function readKeychainKey(account = KEYCHAIN.accounts.anthropic) {
+  if (TEST_DIR) return null;
   try {
     return execFileSync("/usr/bin/security", ["find-generic-password", "-s", KEYCHAIN.service, "-a", account, "-w"], {
       encoding: "utf8",
@@ -116,6 +124,7 @@ function readKeychainKey(account = KEYCHAIN.accounts.anthropic) {
 const KEY_CHARS = /^[A-Za-z0-9_.:-]+$/;
 
 function writeKeychainKey(key, account = KEYCHAIN.accounts.anthropic) {
+  if (TEST_DIR) return;
   const base = ["-s", KEYCHAIN.service, "-a", account];
   if (key) {
     if (!KEY_CHARS.test(key)) throw new Error("that doesn't look like an API key");
@@ -293,7 +302,10 @@ function createWindow() {
   win.loadFile(path.join(here, "ui", "index.html"));
   win.once("ready-to-show", () => {
     applyInvisible();
-    win.show();
+    if (TEST_DIR) {
+      win.setOpacity(0);
+      win.showInactive();
+    } else win.show();
   });
 }
 
@@ -496,13 +508,15 @@ async function runAsk(question, { heard = false } = {}) {
   broadcastState();
   try {
     const { result, problem } = await job.done;
-    if (text) answers.push({ question: q, context, answer: text });
+    if (text) answers.push({ id, question: q, context, answer: text });
     const u = result.usage;
     const cost = addUsage(u, model);
     send("answer-end", { id, error: problem, usage: { input: u.input + u.cacheRead + u.cacheWrite, output: u.output, cost, model: llm.name(model) } });
   } catch (e) {
     const aborted = isAbort(e);
     if (!aborted) log("answer failed:", e);
+    // A stopped answer still shows, so keep it for follow-ups and notes.
+    if (aborted && text) answers.push({ id, question: q, context, answer: text });
     send("answer-end", { id, error: aborted ? null : describeError(llm, e, model), aborted });
   } finally {
     if (current?.id === id) current = null;
@@ -610,7 +624,7 @@ async function saveNotes() {
       parts.push("## Transcript", transcript.map((l) => `**${l.role === "me" ? "You" : "Them"}:** ${l.text}`).join("\n\n"));
     }
     if (answers.length) {
-      parts.push("## Questions and answers", answers.map((a) => `### ${a.question || a.context || "Help with what's on screen"}\n\n${a.answer}`).join("\n\n"));
+      parts.push("## Questions and answers", answers.map((a) => `### ${a.question || a.context || "Help with what's on screen"}\n\n${splitKeys(a.answer).text}${a.said ? `\n\n_You said instead:_ ${a.said}` : ""}`).join("\n\n"));
     }
     mkdirSync(notesDir(), { recursive: true });
     let file = path.join(notesDir(), notesFileName(now));
@@ -731,6 +745,7 @@ function shortcuts() {
 
 // Returns the accelerators that couldn't be registered (taken by another app).
 function registerShortcuts() {
+  if (TEST_DIR) return [];
   globalShortcut.unregisterAll();
   const failed = [];
   for (const [action, accel] of Object.entries(shortcuts())) {
@@ -802,6 +817,12 @@ ipcMain.handle("import-doc", async (_e, kind) => {
   }
 });
 ipcMain.handle("cancel", () => current?.abort());
+// What the user actually said instead of an answer; later questions get it in
+// place of the suggestion. Empty clears it.
+ipcMain.handle("set-said", (_e, id, text) => {
+  const a = answers.find((x) => x.id === id);
+  if (a) a.said = String(text ?? "").trim().slice(0, 1000) || undefined;
+});
 ipcMain.handle("toggle-listening", () => toggleListening());
 // Saves the key for the current provider.
 ipcMain.handle("set-api-key", (_e, key) => {

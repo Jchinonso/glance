@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ask, systemPrompt } from "../src/assistant.js";
+import { ask, splitKeys, systemPrompt } from "../src/assistant.js";
 
 test("resume and job description go with every style, word for word", () => {
   const resume = "Led the billing migration, cut invoice errors 40%.";
@@ -46,4 +46,27 @@ test("your details from setup go with every question", () => {
   const p = systemPrompt("brief", "", "", "", { name: "Johnson", salary: "$140k-$160k", visa: "Needs sponsorship", notice: "" });
   assert.ok(p.includes("<user_details>\nName: Johnson\nSalary expectation: $140k-$160k\nVisa status: Needs sponsorship\n</user_details>"));
   assert.ok(!systemPrompt("brief", "", "", "", {}).includes("<user_details>"));
+});
+
+test("the Keys line is split off, and only near the top", () => {
+  const answer = "**I led the billing migration.**\nKeys: billing migration · 40% fewer errors · staged rollout\n\nAt Acme Pay we…";
+  assert.deepEqual(splitKeys(answer), { text: "**I led the billing migration.**\n\nAt Acme Pay we…", keys: ["billing migration", "40% fewer errors", "staged rollout"] });
+  assert.deepEqual(splitKeys("**Hi.**\n\na\n\nb\n\nKeys: not this").keys, []);
+  assert.deepEqual(splitKeys("**Yes.**\n\nKeys: · Proud of Acme work · Four weeks notice").keys, ["Proud of Acme work", "Four weeks notice"]); // stray leading dot
+  assert.deepEqual(splitKeys("**Yes.**\n**Keys:** cache first · then shard").keys, ["cache first", "then shard"]); // bold label
+  assert.deepEqual(splitKeys("To remap:\nKeys: Cmd+K opens search").keys, [], "an ordinary Keys: line stays");
+  assert.equal(splitKeys("**A.**\n\nKeys: x · y\n\nBody.").text, "**A.**\n\nBody.", "no double gap left behind");
+});
+
+test("earlier answers drop their Keys line; what the user said replaces the suggestion", async () => {
+  let sent = "";
+  const provider = { name: () => "x", stream: ({ parts }) => ((sent = parts.at(-1).text), { done: Promise.resolve({ text: "", usage: {}, stop: "end" }), abort() {} }) };
+  const previous = [
+    { question: "Tell me about a project.", answer: "**The billing migration.**\nKeys: billing · Postgres · 40%\n\nWe moved billing to Postgres." },
+    { question: "Why Postgres?", answer: "**Transactions.**\n\nIt gave us real transactions.", said: "I talked about the team knowing Postgres already" },
+  ];
+  await ask({ provider, model: "m", question: "", transcript: [], previous, screenshots: [], effort: "low", style: "interview", onText() {} }).done;
+  assert.ok(!sent.includes("Keys:"), sent);
+  assert.match(sent, /A \(user said this instead of the suggestion\): .*team knowing Postgres/);
+  assert.ok(!sent.includes("It gave us real transactions"));
 });

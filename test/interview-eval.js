@@ -3,7 +3,7 @@
 // API and costs a few cents.
 //   ANTHROPIC_API_KEY=... node test/interview-eval.js [model]
 //   OPENAI_API_KEY=... EVAL_PROVIDER=openai EVAL_BASE_URL=https://api.openai.com/v1 node test/interview-eval.js gpt-4o
-import { ask } from "../src/assistant.js";
+import { ask, splitKeys } from "../src/assistant.js";
 import { createProvider } from "../src/providers.js";
 
 const model = process.argv[2] || "claude-haiku-5-5";
@@ -33,7 +33,7 @@ const cases = [
   { name: "skill in background", transcript: [t("them", "Have you worked with Kafka?")], require: /2 ?million|2M/i, noteRequired: true },
   { name: "estimation", transcript: [t("them", "How many invoices do you think a mid-size SaaS company sends per month?")] },
   { name: "typed redo: shorter", question: "shorter", transcript: [t("them", "Tell me about yourself.")], previous: [{ question: "Tell me about yourself.", answer: "\nI started at Startup Loop in 2019, building Node and TypeScript APIs, which taught me how to ship quickly and own services end to end. In 2021 I moved to Acme Pay, where I led our billing migration to Postgres. We cut invoice errors by 40%, and the biggest lesson was how much careful data modeling and safe, staged cutovers matter when the data is money. I also built a Kafka event pipeline that handles about 2 million events a day, which gave me a good feel for ordering, retries, and keeping consumers reliable.\n\nThat's why Ledgerly caught my eye. Payments infrastructure is where I've done my best work, and the mix of Postgres at scale and event streaming is exactly my background. I'm looking for a senior role where I can own that kind of correctness-critical system, and this looks like a great fit.\n" }], maxWords: 100 },
-  { name: "follow-up stays consistent", transcript: [t("them", "Tell me about a project you're proud of."), t("them", "How did you measure that 40 percent?")], previous: [{ question: "Tell me about a project you're proud of.", answer: "**The billing migration to Postgres at Acme Pay, which cut invoice errors by 40%.**" }], require: /40/ },
+  { name: "follow-up stays consistent", transcript: [t("them", "Tell me about a project you're proud of."), t("them", "How did you measure that 40 percent?")], previous: [{ question: "Tell me about a project you're proud of.", answer: "**The billing migration to Postgres at Acme Pay, which cut invoice errors by 40%.**" }], forbid: /\b(?!40\b)\d+(?:\.\d+)?\s?(?:%|percent)/i }, // explains the 40% without changing it
 ];
 
 // EVAL_ONLY="salary|visa" runs only those cases.
@@ -45,7 +45,8 @@ for (const c of run) {
   let text = "";
   const { done } = ask({ provider, model, question: c.question || "", transcript: c.transcript, previous: c.previous || [], screenshots: [], effort: "low", style: "interview", customInstructions: "", resume, jobDescription: job, onText: (d) => (text += d) });
   const { problem } = await done;
-  const spoken = text.replace(/```[\s\S]*?```/g, "").replace(/^\*[^*].*\*\s*$/gm, "");
+  const { text: withoutKeys, keys } = splitKeys(text);
+  const spoken = withoutKeys.replace(/```[\s\S]*?```/g, "").replace(/^\*[^*].*\*\s*$/gm, "");
   const words = spoken.split(/\s+/).filter(Boolean).length;
   const issues = [
     problem,
@@ -60,6 +61,10 @@ for (const c of run) {
     /\b(?:Situation|Task|Action|Result|Learning|Learned):/.test(spoken) && "STAR labels in spoken text",
     c.minWords && words < c.minWords && `${words} words, min ${c.minWords}`,
     c.noteRequired && !/^\*[^*].*\*\s*$/m.test(text) && "no note listing added specifics",
+    // Long answers carry 3-4 short key phrases right under the bold line.
+    words > 100 && !c.anyFormat && (keys.length < 3 || keys.length > 4) && `${keys.length} key phrases, want 3-4`,
+    keys.some((k) => k.split(/\s+/).length > 6) && "a key phrase over 6 words",
+    keys.length && !/^\s*Keys:/i.test(text.trim().split("\n").filter((l) => l.trim())[1] || "") && "Keys line not right under the bold line",
   ].filter(Boolean);
   if (issues.length) failed++;
   console.log(`\n=== ${c.name} (${words} words) ${issues.length ? `FAIL: ${issues.join("; ")}` : "ok"}\n${text.trim()}`);

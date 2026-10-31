@@ -146,7 +146,7 @@
             <h2>Who answers</h2>
             <div class="group">
               <button class="row link" id="keyBtn">
-                <div class="row-text"><span>AI provider</span><small id="keyRowHint">Anthropic, OpenAI or any compatible service, and its API key</small></div>
+                <div class="row-text"><span>AI provider</span><small>Anthropic, OpenAI or any compatible service, and its API key</small></div>
                 <span class="row-meta"><span id="keyMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
               </button>
               <div class="row" id="anthropicModelRow">
@@ -369,12 +369,21 @@
         <article class="answer" id="answer" hidden>
           <div class="answer-head">
             <blockquote class="question" id="answerQ"></blockquote>
+            <button type="button" class="textlink viewtoggle" id="viewToggle" hidden>Full answer</button>
             <button class="icon copy" id="copyBtn" title="Copy answer">
               <svg class="copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6.5A1.5 1.5 0 0 0 5.5 13H7" /></svg>
               <svg class="done-icon" viewBox="0 0 20 20" aria-hidden="true"><path d="m4.5 10.5 3.5 3.5 7.5-8" /></svg>
             </button>
           </div>
           <div class="body" id="answerBody"></div>
+          <div class="said" id="saidBox" hidden>
+            <p class="said-text" id="saidText" hidden></p>
+            <button type="button" class="textlink" id="saidOpen">I said something else</button>
+            <form class="said-form" id="saidForm" hidden>
+              <input id="saidInput" maxlength="1000" placeholder="What you said, in a few words (e.g. used the Kafka story)" autocomplete="off" />
+              <button type="submit" class="ghost small">Save</button>
+            </form>
+          </div>
           <p class="usage" id="answerUsage" hidden></p>
         </article>
 

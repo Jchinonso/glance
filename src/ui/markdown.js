@@ -80,3 +80,16 @@ function renderMarkdown(src) {
     .map((part, i) => (i % 2 === 1 ? `<pre><code>${highlightCode(part.replace(/^[\w+#.-]*\n/, ""))}</code></pre>` : renderBlocks(part)))
     .join("");
 }
+
+// Interview answers carry a "Keys: a · b · c" line under the bold first line
+// (same rule as splitKeys in assistant.js). Returns the answer without it.
+function splitKeys(text) {
+  const lines = (text || "").split("\n");
+  // Needs the " · " separator, so an ordinary line starting "Keys:" stays.
+  const i = lines.slice(0, 6).findIndex((l) => /^\s*(?:\*\*)?Keys:/i.test(l) && l.includes("·"));
+  if (i < 0) return { text: text || "", keys: [] };
+  const keys = lines[i].replace(/^\s*(?:\*\*)?Keys:(?:\*\*)?\s*/i, "").split(/\s+·\s+/).map((k) => k.replace(/^[\s·]+|[\s·]+$/g, "")).filter(Boolean);
+  // Drop the line and one of the blank lines around it.
+  lines.splice(i, !lines[i + 1]?.trim() && !lines[i - 1]?.trim() ? 2 : 1);
+  return { text: lines.join("\n"), keys };
+}
