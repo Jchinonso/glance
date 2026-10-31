@@ -186,11 +186,13 @@ body.collapsed .dock { display: none !important; }
   text-overflow: ellipsis;
 }
 .who { font-weight: 700; margin-right: 7px; }
+/* A detected question wraps to three lines, so a long one isn't cut off. */
 .caption:has(.qtag) {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   color: var(--text);
+  white-space: normal;
 }
 .qtag {
   flex: none;
@@ -201,7 +203,8 @@ body.collapsed .dock { display: none !important; }
   font-size: 11.5px;
   font-weight: 700;
 }
-.qtext { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.qtext { flex: 1; min-width: 0; line-height: 1.4; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.caption:has(.qtag) .qtag { margin-top: 1px; }
 .answer-q {
   flex: none;
   height: 26px;

@@ -22,15 +22,35 @@ function isQuestion(text) {
 //   on (the interviewer asked something isQuestion missed), so the old
 //   question is dropped and the model picks the latest one from the transcript.
 // - Short lines ("take your time") keep it.
+// - A new question keeps the lead-in said just before it ("So looking at
+//   your experience with distributed systems, | how would you design…"):
+//   earlier lines from the other side, each ending within CONTINUE_MS of the
+//   next. `before` is the transcript up to (not including) this line.
 const MAX_PENDING = 400;
 const CONTINUE_MS = 2000;
-function nextPendingQuestion(pending, { role, text, at, start = at }) {
+const MAX_LEAD_LINES = 2;
+function nextPendingQuestion(pending, { role, text, at, start = at }, before = []) {
   if (role !== "them") return pending;
   const t = text.trim();
   if (pending && at < pending.at) return pending;
   if (pending && start - pending.at < CONTINUE_MS && pending.text.length + t.length < MAX_PENDING) return { text: `${pending.text} ${t}`, at };
-  if (isQuestion(t)) return { text: t, at };
+  if (isQuestion(t)) return { text: leadIn(before, start, MAX_PENDING - t.length) + t, at };
   return t.split(/\s+/).length >= 6 ? null : pending;
+}
+
+function leadIn(before, start, room) {
+  const lead = [];
+  let next = start;
+  for (let i = before.length - 1; i >= 0 && lead.length < MAX_LEAD_LINES; i--) {
+    const l = before[i];
+    if (l.role !== "them") continue;
+    const line = l.text.trim();
+    if (next - l.at >= CONTINUE_MS || isQuestion(line) || line.length + 1 > room) break;
+    lead.unshift(line);
+    room -= line.length + 1;
+    next = l.start ?? l.at;
+  }
+  return lead.length ? `${lead.join(" ")} ` : "";
 }
 
 // A heard question about something shown ("the code on screen") needs a

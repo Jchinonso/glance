@@ -132,7 +132,7 @@ function renderStrip() {
   const last = heard.at(-1);
   $("caption").hidden = !state.listening;
   if (pendingQuestion && state.listening) {
-    $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext">${escapeHtml(pendingQuestion.text)}</span><button type="button" class="answer-q" id="answerQBtn" title="Answer this question (⌘↵)">Answer</button>`;
+    $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext" title="${escapeHtml(pendingQuestion.text)}">${escapeHtml(pendingQuestion.text)}</span><button type="button" class="answer-q" id="answerQBtn" title="Answer this question (⌘↵)">Answer</button>`;
   } else {
     $("caption").innerHTML = last ? line(last) : "Listening for speech…";
   }
@@ -422,13 +422,15 @@ g.on("state", (s) => {
   render();
 });
 g.on("notice", showNotice);
-g.on("transcript", (l) => {
+// A line heard from the call (named so the UI tests can feed lines in).
+function onTranscript(l) {
   heard.push(l);
   state.transcriptCount = (state.transcriptCount || 0) + 1;
-  pendingQuestion = nextPendingQuestion(pendingQuestion, l);
+  pendingQuestion = nextPendingQuestion(pendingQuestion, l, heard.slice(0, -1));
   renderStrip();
   renderTranscriptLine(l);
-});
+}
+g.on("transcript", onTranscript);
 g.on("focus-input", () => $("question").focus());
 g.on("submit", submit);
 g.on("snap-submit", snapSubmit);

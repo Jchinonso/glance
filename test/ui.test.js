@@ -240,3 +240,22 @@ test("a stopped answer still counts: what you said about it reaches the next que
   await until(`answers.at(-1).question === "Go on" && answers.at(-1).status === "done"`);
   assert.match(requests.at(-1).messages[1].content.at(-1).text, /instead of the suggestion\): I described Postgres cutover/);
 });
+
+test("a question split by pauses shows whole, lead-in included, and Answer sends all of it", { skip }, async () => {
+  const now = Date.now();
+  const caption = await run(`
+    state.listening = true; // as if Listen were on; the next state update resets it
+    onTranscript({ role: "them", text: "So looking at your experience with distributed systems,", start: ${now - 6000}, at: ${now - 3500} });
+    onTranscript({ role: "them", text: "how would you design a rate limiter", start: ${now - 2600}, at: ${now - 1200} });
+    onTranscript({ role: "them", text: "for an API that serves millions of users?", start: ${now - 400}, at: ${now + 1500} });
+    const q = document.querySelector("#caption .qtext");
+    const shown = { text: q.textContent, lines: Math.round(q.getBoundingClientRect().height / parseFloat(getComputedStyle(q).lineHeight)) };
+    document.getElementById("answerQBtn").click();
+    return shown;
+  `);
+  const full = "So looking at your experience with distributed systems, how would you design a rate limiter for an API that serves millions of users?";
+  assert.equal(caption.text, full);
+  assert.ok(caption.lines >= 1 && caption.lines <= 3, `${caption.lines} lines`);
+  await until(`answers.at(-1).question === ${JSON.stringify(full)} && answers.at(-1).status === "done"`);
+  assert.match(requests.at(-1).messages[1].content.at(-1).text, /Question: So looking at your experience with distributed systems, how would you design a rate limiter for an API that serves millions of users\?/);
+});

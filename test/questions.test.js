@@ -88,3 +88,15 @@ test("statements starting with any or has are not questions", () => {
   for (const s of ["Any time works for me", "Has to ship by Friday"]) assert.ok(!isQuestion(s), s);
   assert.ok(isQuestion("Any questions for us"));
 });
+
+test("pending question: keeps the lead-in said just before it", () => {
+  const before = [line("them", "Thanks for walking me through that.", 3000, 1500), line("them", "So looking at your experience with distributed systems,", 9000, 6000)];
+  const q = line("them", "how would you design a rate limiter?", 12500, 9900);
+  assert.equal(nextPendingQuestion(null, q, before).text, "So looking at your experience with distributed systems, how would you design a rate limiter?");
+  // Two lead-in pieces, each a short pause apart.
+  const two = [line("them", "In your last role,", 5000, 4000), line("them", "at the payments company,", 7200, 5800)];
+  assert.equal(nextPendingQuestion(null, line("them", "what was the hardest problem you solved?", 10000, 8000), two).text, "In your last role, at the payments company, what was the hardest problem you solved?");
+  // An earlier question, or a long gap, is not a lead-in.
+  assert.equal(nextPendingQuestion(null, q, [line("them", "Any questions so far?", 9000, 8000)]).text, q.text);
+  assert.equal(nextPendingQuestion(null, q, [line("them", "So that's the team.", 4000, 2000)]).text, q.text);
+});
