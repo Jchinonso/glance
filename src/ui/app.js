@@ -153,6 +153,9 @@ function renderMenu() {
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
   $("compactToggle").setAttribute("aria-checked", String(!!state.compactAnswers));
   $("autoAnswerToggle").setAttribute("aria-checked", String(!!state.autoAnswer));
+  $("autoAnswerHint").textContent = state.style === "interview"
+    ? "While listening, starts the answer as soon as the interviewer finishes a question, so you don't have to press Answer."
+    : "Only works in Interview mode, which is off. Switch with the menu beside the question box.";
   const sp = state.spend || { input: 0, output: 0, dollars: 0 };
   $("spendTotal").textContent = sp.dollars ? `about ${formatDollars(sp.dollars)}` : "";
   $("spendMeta").textContent = sp.dollars
@@ -253,10 +256,16 @@ function renderStage() {
   $("jdCard").hidden = !askingJob || covered;
   $("jdCloak").hidden = !!state.invisible;
   // No job description saved yet: there's no "same role" to keep.
+  // The résumé comes first: without it, interview answers can't sound like you.
   const hasJob = !!state.jobDescription?.trim();
-  $("jdText").textContent = hasJob ? "New interview? Keep the same role, or add its job description." : "Interviewing for a specific role? Add its job description so answers fit it.";
-  $("jdSame").textContent = hasJob ? "Same role" : "Not now";
-  $("jdNew").textContent = hasJob ? "New job description" : "Add job description";
+  const needResume = !state.resume?.trim();
+  $("jdText").textContent = needResume
+    ? "Add your resume so interview answers sound like you."
+    : hasJob
+      ? "New interview? Keep the same role, or add its job description."
+      : "Interviewing for a specific role? Add its job description so answers fit it.";
+  $("jdSame").textContent = hasJob && !needResume ? "Same role" : "Not now";
+  $("jdNew").textContent = needResume ? "Add resume" : hasJob ? "New job description" : "Add job description";
   $("welcome").hidden = covered || view !== "answers" || answers.length > 0;
   $("answer").hidden = covered || view !== "answers" || page < 0;
   $("transcript").hidden = covered || view !== "transcript";
@@ -1067,10 +1076,20 @@ function renderOnboarding() {
   for (const b of $("obUse").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === onboarding.use));
   const words = $("obResume").value.trim() ? $("obResume").value.trim().split(/\s+/).length : 0;
   $("obResumeMeta").textContent = words ? `${words.toLocaleString()} words` : "";
+  // Interview answers are built from the resume, so interviews need one;
+  // meetings don't. Skip setup still leaves without it.
+  const needResume = step === "about" && resumeRequired();
+  $("obResumeNeed").textContent = onboarding.use === "meetings" ? "(optional)" : "(required for interviews)";
+  $("obAboutHint").textContent = onboarding.use === "meetings"
+    ? "So answers about you are accurate. All optional; change it later in Settings > Interview."
+    : "Interview answers are built from your resume, so add it to continue. The rest is optional; change any of it later in Settings > Interview.";
+  $("obNext").disabled = needResume && !words;
+  $("obNext").title = $("obNext").disabled ? "Add your resume to continue" : "";
   $("obCloak").setAttribute("aria-checked", String(!!onboarding.hide));
   $("obListenKey").textContent = plainKeys(state.shortcuts?.listen || "");
   $("obAskKey").textContent = plainKeys(state.shortcuts?.ask || "");
 }
+const resumeRequired = () => onboarding?.use !== "meetings";
 // Saves what the current step collected, then moves on.
 function saveStep() {
   const { step } = onboarding;
@@ -1099,6 +1118,7 @@ function finishOnboarding() {
   $("question").focus();
 }
 $("obNext").addEventListener("click", () => {
+  if (onboarding.step === "about" && resumeRequired() && !$("obResume").value.trim()) return $("obResume").focus();
   saveStep();
   if (onboarding.step === "ready") return finishOnboarding();
   onboarding.step = nextStep(1);
@@ -1156,7 +1176,7 @@ $("jdSame").addEventListener("click", () => {
 });
 $("jdNew").addEventListener("click", () => {
   askingJob = false;
-  openDoc("jobDescription"); // saving it confirms it for this interview
+  openDoc(state.resume?.trim() ? "jobDescription" : "resume"); // saving a job description confirms it for this interview
 });
 
 // Your details (Settings > Interview).

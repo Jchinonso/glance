@@ -66,7 +66,7 @@
           </div>
           <div class="ob-step" data-step="about">
             <p class="lead">About you</p>
-            <p class="hint">So answers sound like you. All optional; change it later in Settings &gt; Interview.</p>
+            <p class="hint" id="obAboutHint">So answers sound like you. Change it later in Settings &gt; Interview.</p>
             <span class="ob-label">What will you use Glance for?</span>
             <div class="seg" id="obUse" role="radiogroup">
               <button type="button" role="radio" data-value="interviews">Interviews</button>
@@ -74,7 +74,7 @@
               <button type="button" role="radio" data-value="both">Both</button>
             </div>
             <div class="ob-labelrow">
-              <span class="ob-label">Resume <small id="obResumeMeta"></small></span>
+              <span class="ob-label">Resume <small id="obResumeNeed"></small> <small id="obResumeMeta"></small></span>
               <button type="button" class="ghost small" id="obResumeImport">Import file…</button>
             </div>
             <textarea id="obResume" rows="4" maxlength="20000" spellcheck="true" placeholder="Paste your resume, or press Import file…"></textarea>
@@ -198,7 +198,7 @@
                 <span class="switch" aria-hidden="true"></span>
               </button>
               <button class="row" id="autoAnswerToggle" role="switch">
-                <div class="row-text"><span>Answer heard questions automatically</span><small>While listening, starts the answer as soon as the interviewer finishes a question, so you don't have to press Answer.</small></div>
+                <div class="row-text"><span>Answer heard questions automatically</span><small id="autoAnswerHint">While listening, starts the answer as soon as the interviewer finishes a question, so you don't have to press Answer.</small></div>
                 <span class="switch" aria-hidden="true"></span>
               </button>
               <button class="row" id="compactToggle" role="switch">

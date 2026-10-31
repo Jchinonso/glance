@@ -89,7 +89,7 @@ npm start   # opens dist/Glance-darwin-arm64/Glance.app
 npm run dmg
 ```
 
-On first launch Glance walks you through setup: an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. Everything can be changed later in Settings.
+On first launch Glance walks you through setup: an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. Everything can be changed later in Settings.
 
 macOS asks for **Screen & System Audio Recording** permission the first time you listen or take a screenshot. Allow it, then reopen Glance once: macOS only sends audio to an app after it reopens. macOS remembers the permission, so this happens only once.
 
@@ -120,7 +120,7 @@ Answers stay at the top while they stream in. Older answers stay in the pager (�
 
 ## Interview mode
 
-Pick **Interview** from the mode menu beside the question box (or **Settings › Interview › Interview mode**). **Meeting** is the everyday mode.
+Glance starts in Interview mode. Switch with the mode menu beside the question box (or **Settings › Interview › Interview mode**); **Meeting** gives Brief or Natural answers about the call and your screen. Auto-answer and the interview prompts below work only in Interview mode.
 
 - **Your résumé and the job description.** Import a PDF, Word, RTF or text file, or paste. Both are sent word for word with every question (up to 20,000 characters each), never compressed, so answers can use your own phrasing. Check imported PDF text: PDFs can merge lines or drop bullets.
 - **Your details.** Name, salary expectation, visa status and notice period, used when an interviewer asks.
@@ -128,7 +128,7 @@ Pick **Interview** from the mode menu beside the question box (or **Settings ›
 - **Auto-answer.** While listening, Glance answers a heard question as soon as the interviewer finishes. It never interrupts an answer you asked for or a question you're typing, and if the interviewer carries on after a long pause, the whole question is answered again. Turn it off in **Settings › Interview › Answer heard questions automatically**.
 - **Key points.** **Key points** on an answer shows the opening line and 3 or 4 phrases; **Full answer** shows the rest. To open every answer that way, turn on **Settings › Interview › Open answers as key points**.
 - **I said something else.** Type what you actually said under an answer; later questions build on that, not the suggestion.
-- **New interview?** When you start listening in Interview mode, Glance asks whether it's the same role or a new job description (again after 30 minutes, or after Clear session).
+- **New interview?** When you start listening in Interview mode, Glance asks whether it's the same role or a new job description (again after 30 minutes, or after Clear session). If no résumé is saved, it asks for that first.
 
 ## Settings
 

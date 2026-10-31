@@ -118,7 +118,13 @@ test("first launch: welcome, about you, job description, ready", { skip }, async
   assert.equal(await run(`return onboarding.step;`), "about"); // a working setup skips the key step
   await click('#obUse [data-value="meetings"]');
   assert.equal(await run(`return onboardingSteps(onboarding).join();`), "welcome,about,ready");
+  assert.ok(!(await run(`return document.getElementById("obNext").disabled;`)), "meetings: resume optional");
   await click('#obUse [data-value="interviews"]');
+  // Interviews need a resume: Next waits for one.
+  assert.ok(await run(`return document.getElementById("obNext").disabled;`), "interviews: Next waits for a resume");
+  assert.match(await run(`return document.getElementById("obResumeNeed").textContent;`), /required for interviews/);
+  await run(`const r = document.getElementById("obResume"); r.value = "Jane Doe, Backend Engineer at Acme Pay since 2021."; r.dispatchEvent(new Event("input"));`);
+  assert.ok(!(await run(`return document.getElementById("obNext").disabled;`)));
   await click("#obNext");
   assert.equal(await run(`return onboarding.step;`), "job");
   await click("#obBack");
@@ -389,6 +395,26 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   await sleep(400);
   assert.deepEqual(await run(`return [answers.length, answers.at(-1).question, waitingForQuestion];`), [count + 1, "What is a race condition?", false]);
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
+});
+
+test("Interview mode without a resume asks for one first; auto-answer says it needs Interview mode", { skip }, async () => {
+  await run(`await g.setSetting("resume", ""); await g.setSetting("jdCheckedAt", 0); await g.setSetting("style", "brief");`);
+  await until(`state.style === "brief" && !state.resume`);
+  await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
+  assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /Only works in Interview mode/);
+  await run(`setMenu(false);`);
+  await click("#modeBtn");
+  await click('#modeMenu [data-value="interview"]');
+  await until(`state.style === "interview" && !document.getElementById("jdCard").hidden`);
+  assert.match(await run(`return document.getElementById("jdText").textContent;`), /Add your resume/);
+  assert.equal(await run(`return document.getElementById("jdNew").textContent;`), "Add resume");
+  await click("#jdNew");
+  assert.ok(await shown("docForm"));
+  assert.equal(await run(`return docKind;`), "resume");
+  await click("#docCancel");
+  await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
+  assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /as soon as the interviewer finishes/);
+  await run(`setMenu(false);`);
 });
 
 test("without an API key: the key form shows, the gear still opens Settings, Listen and Screenshot wait", { skip }, async () => {

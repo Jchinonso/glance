@@ -687,3 +687,6 @@ body.needs-key #listenBtn, body.needs-key #shotBtn { display: none; }
 .primary.alarm { background: var(--alert); color: #fff; }
 label.check { display: flex; align-items: center; gap: 8px; margin: 4px 0; color: var(--text); font-size: 13px; }
 label.check input { width: 15px; height: 15px; accent-color: var(--alert); }
+
+/* A main button that can't be used yet (e.g. setup's Next before a resume). */
+.primary:disabled { opacity: 0.4; cursor: default; filter: none; }
