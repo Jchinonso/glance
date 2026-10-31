@@ -11,8 +11,9 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 
 - [Features](#features)
 - [Screenshots](#screenshots)
+- [Download](#download)
 - [Requirements](#requirements)
-- [Install](#install)
+- [Build from source](#build-from-source)
 - [Using Glance](#using-glance)
 - [Interview mode](#interview-mode)
 - [Settings](#settings)
@@ -50,13 +51,23 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 
 The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated with `node scripts/screenshots.mjs`.
 
+## Download
+
+1. Download **Glance-1.0.0-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
+2. Open it and drag **Glance** onto **Applications**.
+3. Install the speech engine Glance uses to transcribe calls: `brew install whisper-cpp` (needs [Homebrew](https://brew.sh)).
+4. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
+5. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
+
+The speech models are inside the app, which is why the download is about 700 MB.
+
 ## Requirements
 
 - A Mac with Apple Silicon (the build targets `darwin-arm64`).
 - [Homebrew](https://brew.sh) and Node.js 20 or later.
 - An API key for Anthropic or an OpenAI-compatible service, or a local model server (Ollama, LM Studio) that needs no key.
 
-## Install
+## Build from source
 
 ```sh
 # 1. The transcription tool
@@ -73,6 +84,9 @@ npm run package
 
 # 4. Open it
 npm start   # opens dist/Glance-darwin-arm64/Glance.app
+
+# Optional: a DMG for sharing, at dist/Glance-<version>-arm64.dmg
+npm run dmg
 ```
 
 On first launch Glance walks you through setup: an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. Everything can be changed later in Settings.
