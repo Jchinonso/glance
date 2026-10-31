@@ -8,9 +8,40 @@ let page = -1; // index into answers, -1 when none
 let view = "answers"; // "answers" | "transcript"
 let editingKey = false;
 let editingInstructions = false;
+let editingDoc = null; // "resume" | "jobDescription" while its form is open
+// A panel (resume, instructions, provider, shortcuts, transcript) opened from
+// Settings goes back there when closed, to the same tab.
+let fromSettings = false;
+let editingProfile = false;
+// Setup in progress: { step, needsKey, use }. Null once done or skipped.
+let onboarding = null;
+// The "New interview?" card is showing.
+let askingJob = false;
 let settingsOpen = false;
 let collapsed = false;
-let pendingQuestion = null;
+let pendingQuestion = null; // latest question someone else asked, until answered
+// Settings tab, remembered per viewer; settings work without it.
+let settingsTab = (() => {
+  try {
+    return localStorage.getItem("glance.settingsTab") || "answers";
+  } catch {
+    return "answers";
+  }
+})();
+const STYLE_HINTS = {
+  natural: "Natural: complete answers in plain, friendly prose.",
+  brief: "Brief: short answers with only what matters.",
+};
+// Interview mode is the "interview" style. The meeting style is the one used
+// outside it, remembered while Interview mode is on.
+function meetingStyle() {
+  if (state.style !== "interview") return state.style === "natural" ? "natural" : "brief";
+  try {
+    return localStorage.getItem("glance.styleBeforeInterview") === "natural" ? "natural" : "brief";
+  } catch {
+    return "brief";
+  }
+}
 const MODEL_HINTS = {
   "claude-opus-5-5": "Opus 5.5: most capable, $4 / $20 per million tokens",
   "claude-sonnet-5-5": "Sonnet 5.5: nearly as good, half the price",
@@ -21,7 +52,7 @@ let recording = null; // action whose shortcut is being recorded
 
 const SHORTCUT_LABELS = {
   snap: "Screenshot and answer",
-  ask: "Ask what you've typed",
+  ask: "Answer the question just heard, or what you've typed",
   listen: "Start or stop listening",
   toggleWindow: "Show or hide Glance",
   addShot: "Add a screenshot without asking",
@@ -51,9 +82,7 @@ function accelFromEvent(e) {
   const mods = [e.metaKey && "CommandOrControl", e.ctrlKey && "Control", e.altKey && "Alt", e.shiftKey && "Shift"].filter(Boolean);
   if (!mods.some((m) => m !== "Shift")) return null;
   return [...mods, key].join("+");
-} // latest question someone else asked, until answered
-
-
+}
 
 function setCollapsed(on) {
   collapsed = on;
@@ -94,13 +123,26 @@ function renderStrip() {
   const last = heard.at(-1);
   $("caption").hidden = !state.listening;
   if (pendingQuestion && state.listening) {
-    $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext">${escapeHtml(pendingQuestion)}</span><button type="button" class="answer-q" id="answerQBtn" title="Answer this question (⌘↵)">Answer</button>`;
+    $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext">${escapeHtml(pendingQuestion.text)}</span><button type="button" class="answer-q" id="answerQBtn" title="Answer this question (⌘↵)">Answer</button>`;
   } else {
     $("caption").innerHTML = last ? line(last) : "Listening for speech…";
   }
 }
 
 function renderMenu() {
+  for (const b of $("settingsTabs").querySelectorAll("button")) b.setAttribute("aria-selected", String(b.dataset.tab === settingsTab));
+  for (const t of document.querySelectorAll("#menu .tab")) t.hidden = t.dataset.tab !== settingsTab;
+  $("styleHint").textContent = `${STYLE_HINTS[meetingStyle()]}${state.style === "interview" ? " Used when you switch back to Meeting." : ""}`;
+  const interview = state.style === "interview";
+  $("interviewToggle").setAttribute("aria-checked", String(interview));
+  $("interviewOffNote").hidden = interview;
+  $("cloakWarn").hidden = !!state.invisible;
+  const openai = state.provider === "openai";
+  $("anthropicModelRow").hidden = openai;
+  $("effortRow").hidden = openai; // depth is an Anthropic setting
+  $("openaiModelRow").hidden = !openai;
+  $("openaiModelMeta").textContent = state.openaiModel || "not set";
+  $("openaiModelHint").textContent = `OpenAI-compatible, ${hostOf(state.openaiBaseUrl)}`;
   for (const b of $("model").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.model));
   $("modelHint").textContent = MODEL_HINTS[state.model] || "";
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
@@ -109,32 +151,40 @@ function renderMenu() {
   $("spendTotal").textContent = sp.dollars ? `about ${formatDollars(sp.dollars)}` : "";
   $("spendMeta").textContent = sp.dollars
     ? `${sp.input.toLocaleString()} tokens in, ${sp.output.toLocaleString()} out, at list prices`
-    : "Nothing spent yet";
+    : sp.input
+      ? `${sp.input.toLocaleString()} tokens in, ${sp.output.toLocaleString()} out (this provider's prices aren't known)`
+      : "Nothing spent yet";
   $("saveNotesBtn").disabled = !!state.savingNotes;
   $("saveNotesMeta").textContent = state.savingNotes ? "Writing your notes…" : "Summary, decisions, action items and full transcript, to Documents/Glance";
   const n = state.transcriptCount || 0;
   $("transcriptMeta").textContent = n ? `${n.toLocaleString()} line${n === 1 ? "" : "s"} so far` : "What Glance has heard so far";
-  $("instructionsMeta").textContent = state.customInstructions?.trim() ? "on" : "off";
-  $("keyMeta").textContent = state.keyHint ? `ends in ${state.keyHint}` : "not set";
+  $("instructionsMeta").textContent = state.customInstructions?.trim() ? "on" : "none";
+  $("instructionsResumeWarn").hidden = !looksLikeResume(state.customInstructions);
+  $("resumeMeta").textContent = docMeta(state.resume);
+  const filled = [state.profileName, state.salary, state.visa, state.notice].filter((v) => v?.trim()).length;
+  $("profileMeta").textContent = filled ? `${filled} of 4` : "not added";
+  $("jobMeta").textContent = docMeta(state.jobDescription);
+  const providerLabel = (state.providers || []).find((p) => p.id === state.provider)?.label || "Anthropic";
+  $("keyMeta").textContent = state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : providerLabel;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
-  for (const b of $("micMode").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.micMode));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
-  for (const b of $("style").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.style));
+  for (const b of $("style").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === meetingStyle()));
 }
 
 function renderShortcutHints() {
   const k = state.shortcuts;
   if (!k) return;
+  // In call order: listen, answer, then the rest.
   $("guide").innerHTML = [
-    ["snap", "Screenshot your screen and get an answer"],
-    ["ask", "Ask what you've typed below"],
     ["listen", "Start or stop listening to your call"],
+    ["ask", "Answer the question just heard, or what you've typed"],
+    ["snap", "Screenshot your screen and get an answer"],
     ["toggleWindow", "Show or hide Glance"],
   ]
     .map(([a, label]) => `<li><span class="keys">${keycaps(k[a])}</span><span>${label}</span></li>`)
     .join("");
-  $("hints").innerHTML = [["snap", "Screenshot"], ["ask", "Ask"], ["listen", "Listen"]]
+  $("hints").innerHTML = [["listen", "Listen"], ["ask", "Answer"], ["snap", "Screenshot"]]
     .map(([a, label]) => `<span>${keycaps(k[a], true)} ${label}</span>`)
     .join("");
   $("listenBtn").title = `Listen to your call so answers can use what's said (${plainKeys(k.listen)})`;
@@ -153,15 +203,28 @@ function renderShortcutList() {
 }
 
 function renderStage() {
-  const needsKey = !state.hasKey || editingKey;
+  for (const b of document.querySelectorAll("[data-back]")) b.hidden = !fromSettings;
+  // Setup covers everything; its key step uses the key form itself.
+  const onb = !!onboarding && onboarding.step !== "key";
+  $("onboard").hidden = !onb;
+  // During setup only the logo and minimise stay in the top bar.
+  document.body.classList.toggle("onboarding", !!onboarding);
+  if (onb) renderOnboarding();
+  $("keyStepLabel").hidden = onboarding?.step !== "key";
+  $("keyStepBack").hidden = onboarding?.step !== "key";
+  if (onboarding?.step === "key") $("keyStepLabel").textContent = stepLabel(onboardingSteps(onboarding), "key");
+  const needsKey = (!state.hasKey || editingKey) && !onb;
   $("keyForm").hidden = !needsKey;
   const changing = needsKey && state.hasKey;
-  $("keyLead").textContent = changing ? `Replace your API key (current one ends in ${state.keyHint}).` : "Add your Anthropic API key to start.";
-  $("keyManage").hidden = !changing;
+  if (needsKey) renderKeyForm(changing);
+  // Cancel whenever the form was opened from Settings; Remove only with a key.
+  $("keyManage").hidden = !editingKey;
+  $("cancelKeyBtn").hidden = !editingKey;
+  $("removeKeyBtn").hidden = !state.keyHint;
   const shortcutsOpen = !needsKey && editingShortcuts;
   $("shortcutsPanel").hidden = !shortcutsOpen;
   if (shortcutsOpen) renderShortcutList();
-  const settings = !needsKey && !editingInstructions && !shortcutsOpen && settingsOpen;
+  const settings = !needsKey && !onb && !editingInstructions && !editingDoc && !editingProfile && !shortcutsOpen && settingsOpen;
   $("menu").hidden = !settings;
   $("menuBtn").setAttribute("aria-expanded", String(settings));
   $("menuBtn").title = settings ? "Close settings" : "Settings";
@@ -169,7 +232,19 @@ function renderStage() {
   const instr = !needsKey && editingInstructions;
   $("instructionsForm").hidden = !instr;
   if (instr) updateInstructionsCount();
-  const covered = needsKey || instr || settings || shortcutsOpen;
+  const doc = !needsKey && !!editingDoc;
+  $("docForm").hidden = !doc;
+  if (doc) updateDocCount();
+  const prof = !needsKey && !onb && editingProfile;
+  $("profileForm").hidden = !prof;
+  const covered = needsKey || onb || instr || doc || prof || settings || shortcutsOpen;
+  $("jdCard").hidden = !askingJob || covered;
+  $("jdCloak").hidden = !!state.invisible;
+  // No job description saved yet: there's no "same role" to keep.
+  const hasJob = !!state.jobDescription?.trim();
+  $("jdText").textContent = hasJob ? "New interview? Keep the same role, or add its job description." : "Interviewing for a specific role? Add its job description so answers fit it.";
+  $("jdSame").textContent = hasJob ? "Same role" : "Not now";
+  $("jdNew").textContent = hasJob ? "New job description" : "Add job description";
   $("welcome").hidden = covered || view !== "answers" || answers.length > 0;
   $("answer").hidden = covered || view !== "answers" || page < 0;
   $("transcript").hidden = covered || view !== "transcript";
@@ -184,10 +259,10 @@ function renderStage() {
     $("answerQ").textContent = a.question || "Help with what's on screen";
     $("answerBody").innerHTML = renderMarkdown(a.text) + (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "");
     $("answerUsage").hidden = !a.usage;
-    if (a.usage) $("answerUsage").textContent = `About ${formatDollars(a.usage.cost)} with ${a.usage.model || "Claude"} (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
+    if (a.usage) $("answerUsage").textContent = `${a.usage.cost != null ? `About ${formatDollars(a.usage.cost)} with` : "With"} ${a.usage.model || "the model"} (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
   }
 
-  document.querySelector(".dock").hidden = needsKey || instr || settings || shortcutsOpen;
+  document.querySelector(".dock").hidden = needsKey || onb || instr || doc || prof || settings || shortcutsOpen;
 
   const showPager = view === "answers" && answers.length > 1 && !covered;
   $("pager").hidden = !showPager;
@@ -196,6 +271,14 @@ function renderStage() {
     $("prevBtn").disabled = page <= 0;
     $("nextBtn").disabled = page >= answers.length - 1;
   }
+
+  // Which mode answers are in, always visible: Interview answers as you.
+  const interview = state.style === "interview";
+  $("modePick").classList.toggle("interview", interview);
+  $("modeLabel").textContent = interview ? "Interview" : "Meeting";
+  $("modeBtn").title = `Answer mode: ${interview ? "Interview" : "Meeting"}. Click to change.`;
+  $("modeMeetingHint").textContent = `${meetingStyle() === "natural" ? "Natural" : "Brief"} answers about the call and your screen`;
+  for (const b of $("modeMenu").querySelectorAll("button")) b.setAttribute("aria-checked", String((b.dataset.value === "interview") === interview));
 
   const busy = !!state.busy;
   $("askBtn").classList.toggle("stop", busy);
@@ -213,7 +296,7 @@ function renderShots() {
       (s, i) => `<figure class="shot"><img src="${s.thumb}" alt="Screenshot ${i + 1}" /><button type="button" class="remove" data-id="${s.id}" title="Remove screenshot"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5 5l10 10M15 5 5 15" /></svg></button></figure>`,
     )
     .join("");
-  $("question").placeholder = shots.length ? `Ask about ${shots.length === 1 ? "this screenshot" : `these ${shots.length} screenshots`}, or just press Ask` : "Type a question, or just press Ask";
+  $("question").placeholder = shots.length ? `Ask about ${shots.length === 1 ? "this screenshot" : `these ${shots.length} screenshots`}, or press Ask` : "Type a question, or press Ask";
 }
 
 function formatDollars(n) {
@@ -264,7 +347,7 @@ function showNotice({ level, text, action }) {
 }
 
 function snapSubmit() {
-  if (state.busy) return;
+  if (onboarding || state.busy) return;
   const q = $("question").value;
   $("question").value = "";
   view = "answers";
@@ -274,6 +357,7 @@ function snapSubmit() {
 function setMenu(open) {
   settingsOpen = open;
   if (open) editingInstructions = false;
+  if (open) editingDoc = null;
   render();
   $("stage").scrollTop = 0;
 }
@@ -287,25 +371,32 @@ function hasSeenAnswer() {
 }
 
 function submit() {
+  if (onboarding) return; // shortcuts wait until setup is done
   if (state.busy) return g.cancel();
   // Nothing typed but a question was just heard: answer exactly that one. It
-  // came from the call, so the screen isn't attached unless asked for.
+  // came from the call, so the screen isn't attached unless it refers to it.
   const typed = $("question").value.trim();
-  const heard = !typed && state.listening && pendingQuestion;
+  const heard = !typed && state.listening && pendingQuestion?.text;
   $("question").value = "";
   view = "answers";
-  g.ask(typed || heard || "", { heard: !!heard });
+  g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard) });
 }
 
 g.on("state", (s) => {
+  const before = state;
   state = s;
+  // The key step finishes itself once a working key is saved.
+  if (onboarding?.step === "key" && state.hasKey) onboarding.step = nextStep(1);
+  // Start of an interview: Listen pressed, or Interview mode switched on.
+  if ((state.listening && !before.listening) || (state.style === "interview" && before.style && before.style !== "interview")) maybeAskJob();
+  if (state.style !== "interview") askingJob = false;
   render();
 });
 g.on("notice", showNotice);
 g.on("transcript", (l) => {
   heard.push(l);
   state.transcriptCount = (state.transcriptCount || 0) + 1;
-  if (l.role === "them" && isQuestion(l.text)) pendingQuestion = l.text;
+  pendingQuestion = nextPendingQuestion(pendingQuestion, l);
   renderStrip();
   renderTranscriptLine(l);
 });
@@ -320,6 +411,11 @@ g.on("answer-start", ({ id, question }) => {
   settingsOpen = false;
   pendingQuestion = null;
   setCollapsed(false);
+  // Asked by shortcut while a form is open: keep what's typed there, but say
+  // where the answer is.
+  if (editingInstructions || editingDoc || editingProfile || editingShortcuts || (editingKey && state.hasKey)) {
+    showNotice({ level: "ok", text: "Answering behind this form. Close it to see the answer." });
+  }
   renderStrip();
   try {
     localStorage.setItem("glance.seenAnswer", "1");
@@ -354,19 +450,54 @@ $("askForm").addEventListener("submit", (e) => {
   e.preventDefault();
   submit();
 });
+const hostOf = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return url || "";
+  }
+};
+// The provider setup screen. Base URL and model fields are filled once each
+// time the form opens or the provider changes, so typing isn't overwritten.
+let keyFormFor = null;
+function renderKeyForm(changing) {
+  const openai = state.provider === "openai";
+  for (const b of $("keyProvider").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.provider));
+  $("openaiFields").hidden = !openai;
+  if (keyFormFor !== state.provider) {
+    keyFormFor = state.provider;
+    $("keyBaseUrl").value = state.openaiBaseUrl || "";
+    $("keyModel").value = state.openaiModel || "";
+  }
+  $("keyLead").textContent = changing
+    ? `Change who answers${state.keyHint ? ` (current key ends in ${state.keyHint})` : ""}.`
+    : "Choose who answers, then add an API key.";
+  $("keyHint").textContent = openai
+    ? "Works with any OpenAI-compatible API: OpenAI, Google Gemini, OpenRouter, Groq, Mistral, or a local Ollama or LM Studio (no key needed on localhost). Saved in your macOS keychain."
+    : "Create one at console.anthropic.com. It's saved in your macOS keychain.";
+  $("keyInput").placeholder = openai ? (state.keyOptional ? "API key (optional for this local server)" : "API key") : "sk-ant-…";
+}
+$("keyProvider").addEventListener("click", (e) => {
+  const v = e.target.closest("button")?.dataset.value;
+  if (v && v !== state.provider) g.setSetting("provider", v);
+});
 $("keyForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const key = $("keyInput").value.trim();
-  if (!key) return;
-  g.setApiKey(key);
+  if (state.provider === "openai") {
+    const url = $("keyBaseUrl").value.trim();
+    const model = $("keyModel").value.trim();
+    if (!model) return showNotice({ level: "error", text: "Enter the model name, for example gpt-4o, gemini-2.5-pro or llama3.1." });
+    if (url !== state.openaiBaseUrl) g.setSetting("openaiBaseUrl", url);
+    if (model !== state.openaiModel) g.setSetting("openaiModel", model);
+  } else if (!key && !state.keyHint) return;
+  if (key) g.setApiKey(key);
   $("keyInput").value = "";
   editingKey = false;
+  keyFormFor = null;
+  finishPanel();
 });
-$("cancelKeyBtn").addEventListener("click", () => {
-  editingKey = false;
-  $("keyInput").value = "";
-  render();
-});
+$("cancelKeyBtn").addEventListener("click", closePanel);
 $("removeKeyBtn").addEventListener("click", () => {
   editingKey = false;
   $("keyInput").value = "";
@@ -387,6 +518,7 @@ $("saveNotesBtn").addEventListener("click", () => {
   g.saveNotes();
 });
 $("shortcutsBtn").addEventListener("click", () => {
+  fromSettings = settingsOpen;
   settingsOpen = false;
   editingShortcuts = true;
   render();
@@ -427,7 +559,7 @@ $("shortcutsReset").addEventListener("click", () => g.resetShortcuts());
 $("shortcutsDone").addEventListener("click", () => {
   stopRecording();
   editingShortcuts = false;
-  render();
+  finishPanel();
 });
 $("collapseBtn").addEventListener("click", () => setCollapsed(!collapsed));
 $("hideTopBtn").addEventListener("click", () => g.hide());
@@ -446,10 +578,6 @@ $("effort").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (v) g.setSetting("effort", v);
 });
-$("micMode").addEventListener("click", (e) => {
-  const v = e.target.closest("button")?.dataset.value;
-  if (v) g.setSetting("micMode", v);
-});
 $("transcription").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (v) g.setSetting("transcription", v);
@@ -459,9 +587,15 @@ $("vocabularyInput").addEventListener("change", () => g.setSetting("vocabulary",
 $("vocabularyInput").addEventListener("keydown", (e) => {
   if (e.key === "Enter") $("vocabularyInput").blur();
 });
+// In Interview mode this picks the style for later; Interview stays on.
 $("style").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
-  if (v) g.setSetting("style", v);
+  if (!v) return;
+  if (state.style !== "interview") return g.setSetting("style", v);
+  try {
+    localStorage.setItem("glance.styleBeforeInterview", v);
+  } catch {}
+  render();
 });
 $("cloakBtn").addEventListener("click", () => g.setSetting("invisible", !state.invisible));
 $("cloakToggle").addEventListener("click", () => g.setSetting("invisible", !state.invisible));
@@ -473,6 +607,7 @@ $("shots").addEventListener("click", (e) => {
   if (id) g.removeShot(id);
 });
 $("transcriptToggle").addEventListener("click", () => {
+  fromSettings = settingsOpen;
   view = "transcript";
   setMenu(false);
 });
@@ -492,6 +627,7 @@ const approxTokens = (text) => Math.ceil(text.trim().length / 4);
 
 function updateInstructionsCount() {
   const text = $("instructionsInput").value;
+  $("instructionsFormWarn").hidden = !looksLikeResume(text);
   // Show exactly what's sent with each question, while it matches what's saved.
   const sent = state.sentInstructions;
   const unchanged = text === state.customInstructions;
@@ -500,15 +636,114 @@ function updateInstructionsCount() {
     $("sentSummary").textContent = `What Glance sends with each question: about ${approxTokens(sent)} tokens`;
     $("sentText").textContent = sent;
   }
-  const max = state.maxInstructions || 5000;
+  const max = state.maxInstructions || 12000;
   $("instructionsInput").maxLength = max;
   $("instructionsCount").textContent = `${text.length.toLocaleString()} of ${max.toLocaleString()} characters, about ${approxTokens(text)} tokens before compression`;
 }
+// Resume and job description share one form. Both are sent word for word.
+const DOCS = {
+  resume: {
+    lead: "Resume",
+    hint: "Used whenever a question is about you, in any style. Sent word for word and never compressed, so answers can use your own phrasing. Import a PDF, Word, RTF or text file, or paste it. Check the text after importing: PDFs can lose bullets or join lines.",
+    placeholder: "Paste your resume, or press Import file…",
+  },
+  jobDescription: {
+    lead: "Job description",
+    hint: "The role you're interviewing for, used for questions about the role. Sent word for word. Answers match your experience to its requirements and use the company's name. Import a file or paste the posting.",
+    placeholder: "Paste the job posting, or press Import file…",
+  },
+};
+function docMeta(text) {
+  const words = text?.trim() ? text.trim().split(/\s+/).length : 0;
+  return words ? `${words.toLocaleString()} words` : "not added";
+}
+function updateDocCount() {
+  const text = $("docInput").value;
+  const max = state.maxDoc || 20000;
+  $("docInput").maxLength = max;
+  $("docCount").textContent = `${text.length.toLocaleString()} of ${max.toLocaleString()} characters, about ${approxTokens(text)} tokens`;
+}
+function openDoc(kind) {
+  fromSettings = settingsOpen;
+  settingsOpen = false;
+  editingDoc = kind;
+  const d = DOCS[kind];
+  $("docLead").textContent = d.lead;
+  $("docHint").textContent = d.hint;
+  $("docInput").placeholder = d.placeholder;
+  $("docInput").value = state[kind] || "";
+  render();
+  $("stage").scrollTop = 0;
+  // Start at the top (the name and summary), not the end.
+  $("docInput").focus();
+  $("docInput").setSelectionRange(0, 0);
+  $("docInput").scrollTop = 0;
+}
+function closeDoc() {
+  editingDoc = null;
+  finishPanel();
+}
+$("resumeBtn").addEventListener("click", () => openDoc("resume"));
+$("jobBtn").addEventListener("click", () => openDoc("jobDescription"));
+$("docInput").addEventListener("input", updateDocCount);
+$("docImport").addEventListener("click", async () => {
+  const kind = editingDoc;
+  const r = await g.importDoc(kind);
+  if (!r || editingDoc !== kind) return;
+  if (r.error) return showNotice({ level: "error", text: r.error });
+  $("docInput").value = r.text;
+  updateDocCount();
+  const check = r.pdf ? "PDF text can lose bullets or join lines, so check it against your PDF, then press Save." : "Check it, then press Save.";
+  showNotice({ level: r.truncated || r.pdf ? "warn" : "ok", text: `Imported ${r.name}${r.truncated ? ", cut to the 20,000-character limit" : ""}. ${check}` });
+});
+$("docForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  g.setSetting(editingDoc, $("docInput").value);
+  closeDoc();
+});
+$("docCancel").addEventListener("click", closeDoc);
+$("docClear").addEventListener("click", () => {
+  $("docInput").value = "";
+  updateDocCount();
+  $("docInput").focus();
+});
+
 function closeInstructions() {
   editingInstructions = false;
-  render();
+  finishPanel();
 }
+// Back to Settings if the panel came from there, otherwise to the answers.
+function finishPanel() {
+  if (fromSettings) {
+    fromSettings = false;
+    settingsOpen = true;
+  }
+  render();
+  $("stage").scrollTop = 0;
+}
+// Closes whichever panel is open, as Back, Cancel and Esc do.
+function closePanel() {
+  if (editingShortcuts) {
+    stopRecording();
+    editingShortcuts = false;
+  }
+  if (editingKey && state.hasKey) {
+    editingKey = false;
+    keyFormFor = null;
+    $("keyInput").value = "";
+  }
+  editingInstructions = false;
+  editingDoc = null;
+  editingProfile = false;
+  if (view === "transcript") view = "answers";
+  finishPanel();
+}
+const panelOpen = () => editingShortcuts || editingInstructions || !!editingDoc || editingProfile || (editingKey && state.hasKey) || view === "transcript";
+document.addEventListener("click", (e) => {
+  if (e.target.closest("[data-back]")) closePanel();
+});
 $("instructionsBtn").addEventListener("click", () => {
+  fromSettings = settingsOpen;
   settingsOpen = false;
   editingInstructions = true;
   $("instructionsInput").value = state.customInstructions || "";
@@ -529,14 +764,60 @@ $("instructionsClear").addEventListener("click", () => {
   updateInstructionsCount();
   $("instructionsInput").focus();
 });
+$("openaiModelRow").addEventListener("click", () => $("keyBtn").click());
 $("keyBtn").addEventListener("click", () => {
+  fromSettings = settingsOpen;
   settingsOpen = false;
   editingKey = true;
+  keyFormFor = null;
   setMenu(false);
   render();
   $("keyInput").focus();
 });
 $("quitBtn").addEventListener("click", () => g.quit());
+$("settingsTabs").addEventListener("click", (e) => {
+  const tab = e.target.closest("button")?.dataset.tab;
+  if (!tab) return;
+  settingsTab = tab;
+  try {
+    localStorage.setItem("glance.settingsTab", tab);
+  } catch {}
+  render();
+  $("stage").scrollTop = 0;
+});
+// Interview mode is Style > Interview, switched from Settings > Interview or the
+// main screen; turning it off goes back to the style used before.
+function toggleInterview() {
+  if (state.style === "interview") {
+    let previous = "brief";
+    try {
+      previous = localStorage.getItem("glance.styleBeforeInterview") || "brief";
+    } catch {}
+    g.setSetting("style", previous);
+  } else {
+    try {
+      localStorage.setItem("glance.styleBeforeInterview", state.style);
+    } catch {}
+    g.setSetting("style", "interview");
+  }
+}
+$("interviewToggle").addEventListener("click", toggleInterview);
+function setModeMenu(open) {
+  $("modeMenu").hidden = !open;
+  $("modeBtn").setAttribute("aria-expanded", String(open));
+}
+$("modeBtn").addEventListener("click", () => setModeMenu($("modeMenu").hidden));
+$("modeMenu").addEventListener("click", (e) => {
+  const v = e.target.closest("button")?.dataset.value;
+  if (!v) return;
+  setModeMenu(false);
+  if ((v === "interview") !== (state.style === "interview")) toggleInterview();
+});
+document.addEventListener("click", (e) => {
+  if (!$("modeMenu").hidden && !e.target.closest("#modePick")) setModeMenu(false);
+});
+$("cloakFix").addEventListener("click", () => g.setSetting("invisible", true));
+$("jdCloakFix").addEventListener("click", () => g.setSetting("invisible", true));
 $("prevBtn").addEventListener("click", () => {
   page = Math.max(0, page - 1);
   renderStage();
@@ -597,15 +878,10 @@ document.addEventListener("keydown", (e) => {
     }
   }
   if (e.key === "Escape") {
-    if (editingShortcuts) {
-      editingShortcuts = false;
-      render();
-    } else if (settingsOpen) setMenu(false);
-    else if (editingInstructions) closeInstructions();
-    else if (view === "transcript") {
-      view = "answers";
-      render();
-    }
+    if (onboarding) return; // setup has its own Back and Skip setup
+    if (!$("modeMenu").hidden) return setModeMenu(false);
+    if (panelOpen()) closePanel();
+    else if (settingsOpen) setMenu(false);
     else g.hide();
   }
 });
@@ -619,19 +895,177 @@ const sizer = new ResizeObserver(fit);
 for (const el of $("glass").children) sizer.observe(el);
 new MutationObserver(fit).observe($("glass"), { subtree: true, attributes: true, attributeFilter: ["hidden"] });
 
+// Welcome and setup: welcome, then (only if needed) the key, about you, the
+// job description for interviews, and a ready screen. Shown on first launch
+// and from Settings > General > Show welcome again.
+function startOnboarding() {
+  g.setSetting("setupActive", true);
+  settingsOpen = false;
+  editingKey = false;
+  onboarding = {
+    step: "welcome",
+    needsKey: !state.hasKey,
+    use: state.style === "interview" ? "interviews" : state.resume?.trim() ? "both" : "interviews",
+  };
+  // Prefill with what's already saved.
+  $("obResume").value = state.resume || "";
+  $("obJob").value = state.jobDescription || "";
+  $("obName").value = state.profileName || "";
+  $("obSalary").value = state.salary || "";
+  $("obVisa").value = state.visa || "";
+  $("obNotice").value = state.notice || "";
+  // Hiding defaults on during setup for interviews; the ready step can undo it.
+  onboarding.hide = state.invisible || onboarding.use !== "meetings";
+}
+function nextStep(dir) {
+  const steps = onboardingSteps(onboarding);
+  let i = steps.indexOf(onboarding.step) + dir;
+  // A key saved meanwhile: going back skips the key step.
+  if (steps[i] === "key" && state.hasKey) i += dir;
+  return steps[Math.max(0, Math.min(steps.length - 1, i))];
+}
+function renderOnboarding() {
+  const { step } = onboarding;
+  const steps = onboardingSteps(onboarding);
+  for (const el of document.querySelectorAll("#onboard .ob-step")) el.hidden = el.dataset.step !== step;
+  $("onboardStepLabel").textContent = stepLabel(steps, step);
+  $("onboardHead").hidden = step === "welcome";
+  $("onboardSkip").hidden = step === "ready";
+  $("obBack").hidden = step === "welcome";
+  $("obNext").textContent = step === "welcome" ? "Get started" : step === "ready" ? "Start using Glance" : "Next";
+  for (const b of $("obUse").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === onboarding.use));
+  const words = $("obResume").value.trim() ? $("obResume").value.trim().split(/\s+/).length : 0;
+  $("obResumeMeta").textContent = words ? `${words.toLocaleString()} words` : "";
+  $("obCloak").setAttribute("aria-checked", String(!!onboarding.hide));
+  $("obListenKey").textContent = plainKeys(state.shortcuts?.listen || "");
+  $("obAskKey").textContent = plainKeys(state.shortcuts?.ask || "");
+}
+// Saves what the current step collected, then moves on.
+function saveStep() {
+  const { step } = onboarding;
+  if (step === "about") {
+    const resume = $("obResume").value;
+    if (resume !== (state.resume || "")) g.setSetting("resume", resume);
+    for (const [id, name] of [["obName", "profileName"], ["obSalary", "salary"], ["obVisa", "visa"], ["obNotice", "notice"]]) {
+      const v = $(id).value.trim();
+      if (v !== (state[name] || "")) g.setSetting(name, v);
+    }
+    const style = onboarding.use === "meetings" ? meetingStyle() : "interview";
+    if (style !== state.style) g.setSetting("style", style);
+  } else if (step === "job") {
+    const job = $("obJob").value;
+    if (job !== (state.jobDescription || "")) g.setSetting("jobDescription", job);
+    else if (job.trim()) g.setSetting("jdCheckedAt", Date.now()); // confirmed as is
+  } else if (step === "ready") {
+    if (!!onboarding.hide !== !!state.invisible) g.setSetting("invisible", !!onboarding.hide);
+  }
+}
+function finishOnboarding() {
+  g.setSetting("setupActive", false);
+  g.setSetting("onboarded", true);
+  onboarding = null;
+  render();
+  $("question").focus();
+}
+$("obNext").addEventListener("click", () => {
+  saveStep();
+  if (onboarding.step === "ready") return finishOnboarding();
+  onboarding.step = nextStep(1);
+  render();
+  $("stage").scrollTop = 0;
+  if (onboarding.step === "key") $("keyInput").focus();
+});
+$("obBack").addEventListener("click", () => {
+  onboarding.step = nextStep(-1);
+  render();
+  $("stage").scrollTop = 0;
+});
+$("onboardSkip").addEventListener("click", finishOnboarding);
+$("keyStepBack").addEventListener("click", () => {
+  onboarding.step = "welcome";
+  render();
+});
+$("obUse").addEventListener("click", (e) => {
+  const v = e.target.closest("button")?.dataset.value;
+  if (!v) return;
+  onboarding.use = v;
+  onboarding.hide = state.invisible || v !== "meetings";
+  render();
+});
+$("obResume").addEventListener("input", () => renderOnboarding());
+$("obCloak").addEventListener("click", () => {
+  onboarding.hide = !onboarding.hide;
+  render();
+});
+for (const [button, field, kind] of [["obResumeImport", "obResume", "resume"], ["obJobImport", "obJob", "jobDescription"]]) {
+  $(button).addEventListener("click", async () => {
+    const r = await g.importDoc(kind);
+    if (!r || !onboarding) return;
+    if (r.error) return showNotice({ level: "error", text: r.error });
+    $(field).value = r.text;
+    renderOnboarding();
+    const check = r.pdf ? "PDF text can lose bullets or join lines, so check it." : "Check it, then press Next.";
+    showNotice({ level: r.truncated || r.pdf ? "warn" : "ok", text: `Imported ${r.name}${r.truncated ? ", cut to the 20,000-character limit" : ""}. ${check}` });
+  });
+}
+$("welcomeAgainBtn").addEventListener("click", () => {
+  startOnboarding();
+  render();
+  $("stage").scrollTop = 0;
+});
+
+// "New interview?" at the start of each interview (see shouldAskJob).
+function maybeAskJob() {
+  if (!onboarding && shouldAskJob({ style: state.style, jdCheckedAt: state.jdCheckedAt, now: Date.now() })) askingJob = true;
+}
+$("jdSame").addEventListener("click", () => {
+  askingJob = false;
+  g.setSetting("jdCheckedAt", Date.now());
+  render();
+});
+$("jdNew").addEventListener("click", () => {
+  askingJob = false;
+  openDoc("jobDescription"); // saving it confirms it for this interview
+});
+
+// Your details (Settings > Interview).
+$("profileBtn").addEventListener("click", () => {
+  fromSettings = settingsOpen;
+  settingsOpen = false;
+  editingProfile = true;
+  $("pfName").value = state.profileName || "";
+  $("pfSalary").value = state.salary || "";
+  $("pfVisa").value = state.visa || "";
+  $("pfNotice").value = state.notice || "";
+  render();
+  $("pfName").focus();
+});
+$("profileForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  for (const [id, name] of [["pfName", "profileName"], ["pfSalary", "salary"], ["pfVisa", "visa"], ["pfNotice", "notice"]]) {
+    const v = $(id).value.trim();
+    if (v !== (state[name] || "")) g.setSetting(name, v);
+  }
+  editingProfile = false;
+  finishPanel();
+});
+$("profileCancel").addEventListener("click", closePanel);
+
 g.getState().then((s) => {
   const { transcript, ...rest } = s;
   state = rest;
   heard = transcript;
   heard.forEach(renderTranscriptLine);
+  if (!state.onboarded) startOnboarding();
+  else maybeAskJob(); // opened in Interview mode: likely a new interview
   render();
-  $("question").focus();
+  if (!onboarding) $("question").focus();
 });
 
 // Fade the top edge only once the content has scrolled under it.
 $("stage").addEventListener("scroll", () => $("stage").classList.toggle("scrolled", $("stage").scrollTop > 4));
 
-// One click (or ⌘↵) answers the detected question; Claude already treats the
+// One click (or ⌘↵) answers the detected question; the model already treats the
 // latest question in the transcript as the thing to answer.
 $("caption").addEventListener("click", (e) => {
   if (e.target.closest("#answerQBtn")) submit();

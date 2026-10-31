@@ -17,6 +17,7 @@
   --mint: #7ee3c4;
   --alert: #ff8f85;
   --caution: #f3cf7a;
+  --menu: #1c2430;
 
   --ui: ui-rounded, "SF Pro Rounded", -apple-system, system-ui, sans-serif;
   --read: ui-serif, "New York", Georgia, serif;
@@ -244,6 +245,7 @@ button.row:hover { background: var(--raise); }
 .row-text { display: flex; flex-direction: column; min-width: 0; }
 .row-text span { font-weight: 500; }
 .row-text small { color: var(--dim); font-size: 12px; margin-top: 1px; }
+.row-text small.caution { color: var(--caution); }
 .row.stacked { flex-direction: column; align-items: stretch; gap: 8px; padding: 10px 14px 12px; }
 .row.stacked input { width: 100%; height: 32px; border-radius: 8px; }
 .row-meta { display: flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; flex: none; }
@@ -289,6 +291,8 @@ button.row:hover { background: var(--raise); }
   -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - 22px), transparent);
 }
 body.settings-open .stage { max-height: 520px; }
+/* Setup uses the full height the window allows (720 minus the top bar). */
+body.onboarding .stage { max-height: 640px; }
 .stage.scrolled {
   -webkit-mask-image: linear-gradient(to bottom, transparent, #000 18px, #000 calc(100% - 22px), transparent);
 }
@@ -321,11 +325,13 @@ body.settings-open .stage { max-height: 520px; }
 
 .lead { margin: 4px 0 6px; font: 500 16px/1.45 var(--read); }
 .hint { margin: 0; color: var(--dim); }
+.caution, .hint.caution { color: var(--caution); }
 .keyrow { display: flex; gap: 8px; margin-top: 12px; }
 .keyrow input { flex: 1; }
 .keyrow.secondary { margin-top: 8px; }
 
-.instructions textarea {
+.instructions textarea,
+.onboard textarea {
   display: block;
   width: 100%;
   margin-top: 12px;
@@ -338,8 +344,10 @@ body.settings-open .stage { max-height: 520px; }
   font: 13.5px/1.5 var(--ui);
   user-select: text;
 }
-.instructions textarea::placeholder { color: var(--faint); }
-.instructions textarea:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-hover); }
+.instructions textarea::placeholder,
+.onboard textarea::placeholder { color: var(--faint); }
+.instructions textarea:focus,
+.onboard textarea:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-hover); }
 .sent { margin-top: 8px; color: var(--dim); font-size: 12px; }
 .sent summary { cursor: pointer; }
 .sent pre {
@@ -490,7 +498,7 @@ body.settings-open .stage { max-height: 520px; }
 .shot:hover .remove, .shot .remove:focus-visible { opacity: 1; }
 .shot .remove svg { width: 10px; height: 10px; stroke-width: 2.2; }
 
-.ask { flex: 1; display: flex; gap: 6px; }
+.ask { flex: 1; min-width: 0; display: flex; gap: 6px; }
 input {
   min-width: 0;
   height: 34px;
@@ -550,6 +558,7 @@ input:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-h
     --mint: #12946f;
     --alert: #c8402f;
     --caution: #9a6b00;
+    --menu: #ffffff;
   }
   .primary, .count { color: #fff; }
   .answer-q { color: #fff; }
@@ -566,3 +575,84 @@ input:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-h
   .shot .remove { background: rgba(255, 255, 255, 0.9); color: #16202b; }
 }
 
+
+.keyfields { display: flex; flex-direction: column; gap: 8px; }
+.keyfields label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 12px; }
+#keyProvider, .keyfields { margin-top: 12px; }
+#keyProvider { width: fit-content; }
+
+/* Settings tabs: one job per tab, so each fits without much scrolling. */
+.settings-tabs { width: 100%; margin: 2px 0 12px; }
+.settings-tabs button { flex: 1; padding: 6px 8px; }
+.settings-tabs button[aria-selected="true"] { background: var(--raise-hover); color: var(--text); font-weight: 700; }
+.callout {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 8px 8px 8px 14px;
+  border: 1px solid color-mix(in srgb, var(--caution) 40%, transparent);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--caution) 8%, transparent);
+  color: var(--caution);
+  font-size: 12.5px;
+}
+.tab-note { margin: 8px 2px 0; color: var(--dim); font-size: 12px; }
+
+/* Back to Settings from a panel opened there. */
+.back { display: inline-flex; align-items: center; gap: 2px; margin: 0 0 8px -4px; padding: 4px 8px 4px 2px; border-radius: 8px; color: var(--ice); font-size: 12.5px; font-weight: 600; }
+.back:hover { background: var(--raise); }
+.back svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.transcript .back { margin-top: 2px; }
+
+/* Welcome and setup */
+.onboard { display: flex; flex-direction: column; gap: 10px; }
+.onboard-head { display: flex; align-items: center; justify-content: space-between; min-height: 26px; }
+.step-label { color: var(--dim); font-size: 12px; font-weight: 600; }
+#keyStepLabel { display: block; margin-bottom: 6px; }
+button.small { padding: 4px 10px; font-size: 12px; }
+.ob-title { margin: 0; font: 500 23px/1.25 var(--read); color: var(--text); }
+.ob-lead { margin: 0; color: var(--text); line-height: 1.5; }
+.ob-points { margin: 0; padding-left: 18px; color: var(--text); line-height: 1.55; display: flex; flex-direction: column; gap: 4px; }
+.ob-points strong { font-weight: 600; }
+.ob-features { margin: 4px 0 0; display: grid; gap: 2px 0; }
+.ob-features dt { color: var(--text); font-weight: 600; margin-top: 8px; }
+.ob-features dt:first-child { margin-top: 0; }
+.ob-features dd { margin: 0; color: var(--dim); line-height: 1.5; }
+/* Setup: the app's own controls wait until it's done. */
+body.onboarding .bar .actions > :not(#hideTopBtn) { display: none; }
+.textlink { background: none; border: 0; padding: 6px 10px; color: var(--dim); font-size: 13px; }
+.textlink:hover { color: var(--text); }
+
+.ob-label { color: var(--dim); font-size: 12px; font-weight: 600; margin-top: 4px; }
+.ob-label small { font-weight: 400; margin-left: 6px; }
+#obUse { width: fit-content; }
+.ob-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 10px; }
+.ob-grid label { display: flex; flex-direction: column; gap: 4px; color: var(--dim); font-size: 12px; }
+.ob-nav { justify-content: flex-end; margin-top: 4px; }
+#obBack { margin-right: auto; }
+.ob-step { display: flex; flex-direction: column; gap: 8px; }
+.jd-card { flex-direction: column; align-items: stretch; gap: 6px; margin: 0 0 10px; }
+.jd-main { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.jd-cloak { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding-top: 6px; border-top: 1px solid color-mix(in srgb, var(--caution) 25%, transparent); color: var(--dim); font-size: 12px; }
+.jd-cloak .textlink { padding: 2px 6px; color: var(--caution); font-size: 12px; font-weight: 600; }
+.callout-actions { display: flex; gap: 6px; flex: none; }
+.ob-labelrow { display: flex; align-items: center; justify-content: space-between; margin-top: 4px; }
+.ob-labelrow .ob-label { margin-top: 0; }
+.ob-grid input, .keyfields input { color: var(--text); }
+
+/* Answer mode beside the question box: the current mode is always visible,
+   the choice opens upward. */
+.modepick { position: relative; flex: none; }
+.modepick-btn { display: inline-flex; align-items: center; gap: 2px; height: 34px; padding: 0 6px 0 10px; border-radius: 999px; background: var(--raise); color: var(--dim); font-size: 12.5px; font-weight: 600; }
+.modepick-btn:hover, .modepick-btn[aria-expanded="true"] { background: var(--raise-hover); color: var(--text); }
+.modepick-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.modepick.interview .modepick-btn { background: rgba(185, 163, 255, 0.2); color: var(--violet); }
+.modemenu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; width: 250px; padding: 4px; border-radius: 12px; background: var(--menu); border: 1px solid var(--edge); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; }
+.modemenu[hidden] { display: none; }
+.modemenu button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 10px 7px 26px; border-radius: 8px; text-align: left; color: var(--text); position: relative; }
+.modemenu button:hover { background: var(--raise-hover); }
+.modemenu button span { font-size: 13px; font-weight: 600; }
+.modemenu button small { color: var(--dim); font-size: 11.5px; line-height: 1.35; }
+.modemenu button[aria-checked="true"]::before { content: "✓"; position: absolute; left: 9px; top: 7px; font-size: 12px; color: var(--ice); }

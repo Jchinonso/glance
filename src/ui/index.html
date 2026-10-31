@@ -47,122 +47,247 @@
       <p class="caption" id="caption" hidden></p>
 
       <main class="stage" id="stage">
+        <section class="onboard" id="onboard" hidden>
+          <div class="onboard-head" id="onboardHead">
+            <span class="step-label" id="onboardStepLabel"></span>
+          </div>
+          <div class="ob-step" data-step="welcome">
+            <h1 class="ob-title">Welcome to Glance</h1>
+            <p class="ob-lead">Glance sits on top of your screen during calls and interviews. When you're asked a question, it shows you what to say.</p>
+            <dl class="ob-features">
+              <dt>It hears the question</dt>
+              <dd>Glance follows the call and picks out questions as they're asked.</dd>
+              <dt>You get an answer in seconds</dt>
+              <dd>Built from the conversation and whatever is on your screen, such as code or a shared doc.</dd>
+              <dt>It sounds like you</dt>
+              <dd>In Interview mode, answers come from your resume, in your words, ready to say aloud.</dd>
+            </dl>
+            <p class="hint">Setup takes about a minute, and you can change everything later in Settings.</p>
+          </div>
+          <div class="ob-step" data-step="about">
+            <p class="lead">About you</p>
+            <p class="hint">So answers sound like you. All optional; change it later in Settings &gt; Interview.</p>
+            <span class="ob-label">What will you use Glance for?</span>
+            <div class="seg" id="obUse" role="radiogroup">
+              <button type="button" role="radio" data-value="interviews">Interviews</button>
+              <button type="button" role="radio" data-value="meetings">Meetings</button>
+              <button type="button" role="radio" data-value="both">Both</button>
+            </div>
+            <div class="ob-labelrow">
+              <span class="ob-label">Resume <small id="obResumeMeta"></small></span>
+              <button type="button" class="ghost small" id="obResumeImport">Import file…</button>
+            </div>
+            <textarea id="obResume" rows="4" maxlength="20000" spellcheck="true" placeholder="Paste your resume, or press Import file…"></textarea>
+            <div class="ob-grid">
+              <label>Name<input id="obName" maxlength="200" autocomplete="off" /></label>
+              <label>Salary range<input id="obSalary" maxlength="200" placeholder="e.g. $140k to $160k" autocomplete="off" /></label>
+              <label>Visa status<input id="obVisa" maxlength="200" placeholder="e.g. Needs sponsorship" autocomplete="off" /></label>
+              <label>Notice period<input id="obNotice" maxlength="200" placeholder="e.g. 4 weeks" autocomplete="off" /></label>
+            </div>
+          </div>
+          <div class="ob-step" data-step="job">
+            <p class="lead">The role you're interviewing for</p>
+            <p class="hint">Paste the job posting or import it. Answers match your experience to it and use the company's name. Glance asks again at the start of each new interview.</p>
+            <div class="ob-labelrow">
+              <span class="ob-label">Job posting</span>
+              <button type="button" class="ghost small" id="obJobImport">Import file…</button>
+            </div>
+            <textarea id="obJob" rows="8" maxlength="20000" spellcheck="true" placeholder="Paste the job posting, or press Import file…"></textarea>
+          </div>
+          <div class="ob-step" data-step="ready">
+            <p class="lead">You're set</p>
+            <div class="group">
+              <button type="button" class="row" id="obCloak" role="switch">
+                <div class="row-text"><span>Hide from screen sharing</span><small>Keeps Glance out of what the other side sees if you share your screen</small></div>
+                <span class="switch" aria-hidden="true"></span>
+              </button>
+            </div>
+            <ul class="ob-points">
+              <li>When the call starts, press <strong>Listen</strong> (<span id="obListenKey"></span>). macOS asks for screen and audio access the first time.</li>
+              <li>When a question shows up, press <strong>Answer</strong> (<span id="obAskKey"></span>).</li>
+              <li>Everything here lives in Settings, the gear at the top.</li>
+            </ul>
+          </div>
+          <div class="formrow ob-nav">
+            <button type="button" class="ghost" id="obBack">Back</button>
+            <button type="button" class="textlink" id="onboardSkip">Skip setup</button>
+            <button type="button" class="primary" id="obNext">Get started</button>
+          </div>
+        </section>
+
+        <div class="callout jd-card" id="jdCard" hidden>
+          <div class="jd-main">
+            <span id="jdText">New interview? Keep the same role, or add its job description.</span>
+            <span class="callout-actions">
+              <button type="button" class="ghost" id="jdSame">Same role</button>
+              <button type="button" class="ghost" id="jdNew">New job description</button>
+            </span>
+          </div>
+          <div class="jd-cloak" id="jdCloak" hidden>
+            <span>Glance is visible when you share your screen.</span>
+            <button type="button" class="textlink" id="jdCloakFix">Hide it</button>
+          </div>
+        </div>
+
         <section class="welcome" id="welcome">
           <ul class="guide" id="guide"></ul>
           <p class="hints" id="hints" hidden></p>
         </section>
 
         <section class="settings" id="menu" hidden>
-          <h2>Answers</h2>
-          <div class="group">
-            <div class="row">
-              <div class="row-text"><span>Model</span><small id="modelHint">Opus is the most capable</small></div>
-              <div class="seg" id="model" role="radiogroup">
-                <button role="radio" data-value="claude-opus-5-5">Opus</button>
-                <button role="radio" data-value="claude-sonnet-5-5">Sonnet</button>
-                <button role="radio" data-value="claude-haiku-5-5">Haiku</button>
+          <div class="seg settings-tabs" id="settingsTabs" role="tablist" aria-label="Settings">
+            <button role="tab" data-tab="answers">Answers</button>
+            <button role="tab" data-tab="interview">Interview</button>
+            <button role="tab" data-tab="session">Session</button>
+            <button role="tab" data-tab="general">General</button>
+          </div>
+
+          <div class="tab" data-tab="answers" role="tabpanel">
+            <h2>Who answers</h2>
+            <div class="group">
+              <button class="row link" id="keyBtn">
+                <div class="row-text"><span>AI provider</span><small id="keyRowHint">Anthropic, OpenAI or any compatible service, and its API key</small></div>
+                <span class="row-meta"><span id="keyMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <div class="row" id="anthropicModelRow">
+                <div class="row-text"><span>Model</span><small id="modelHint">Opus is the most capable</small></div>
+                <div class="seg" id="model" role="radiogroup">
+                  <button role="radio" data-value="claude-opus-5-5">Opus</button>
+                  <button role="radio" data-value="claude-sonnet-5-5">Sonnet</button>
+                  <button role="radio" data-value="claude-haiku-5-5">Haiku</button>
+                </div>
+              </div>
+              <button class="row link" id="openaiModelRow" hidden>
+                <div class="row-text"><span>Model</span><small id="openaiModelHint"></small></div>
+                <span class="row-meta"><span id="openaiModelMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <div class="row" id="effortRow">
+                <div class="row-text"><span>Depth</span><small>How long it thinks first. Deeper is slower and costs more.</small></div>
+                <div class="seg" id="effort" role="radiogroup">
+                  <button role="radio" data-value="low">Quick</button>
+                  <button role="radio" data-value="medium">Balanced</button>
+                  <button role="radio" data-value="high">Thorough</button>
+                </div>
               </div>
             </div>
-            <div class="row">
-              <div class="row-text"><span>Depth</span><small>Deeper takes longer and costs more</small></div>
-              <div class="seg" id="effort" role="radiogroup">
-                <button role="radio" data-value="low">Quick</button>
-                <button role="radio" data-value="medium">Balanced</button>
-                <button role="radio" data-value="high">Thorough</button>
+
+            <h2>How it answers</h2>
+            <div class="group">
+              <div class="row">
+                <div class="row-text"><span>Meeting style</span><small id="styleHint"></small></div>
+                <div class="seg" id="style" role="radiogroup">
+                  <button role="radio" data-value="natural">Natural</button>
+                  <button role="radio" data-value="brief">Brief</button>
+                </div>
               </div>
+              <button class="row link" id="instructionsBtn">
+                <div class="row-text"><span>Custom instructions</span><small>Your own rules, added to every question</small><small class="caution" id="instructionsResumeWarn" hidden>This looks like a resume. Move it to Interview &gt; Resume so its wording isn't compressed.</small></div>
+                <span class="row-meta"><span id="instructionsMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <button class="row" id="autoScreenToggle" role="switch">
+                <div class="row-text"><span>Screenshot every question</span><small>For typed questions. Heard questions get one only when they mention the screen.</small></div>
+                <span class="switch" aria-hidden="true"></span>
+              </button>
             </div>
-            <div class="row">
-              <div class="row-text"><span>Style</span><small>Natural is complete, Brief uses fewer tokens</small></div>
-              <div class="seg" id="style" role="radiogroup">
-                <button role="radio" data-value="natural">Natural</button>
-                <button role="radio" data-value="brief">Brief</button>
+          </div>
+
+          <div class="tab" data-tab="interview" role="tabpanel" hidden>
+            <div class="group">
+              <button class="row" id="interviewToggle" role="switch">
+                <div class="row-text"><span>Interview mode</span><small>Answers come back in first person, ready to say aloud, built from your resume.</small></div>
+                <span class="switch" aria-hidden="true"></span>
+              </button>
+            </div>
+            <div class="callout" id="cloakWarn" hidden>
+              <span>Glance shows up if you share your screen.</span>
+              <button type="button" class="ghost" id="cloakFix">Hide it</button>
+            </div>
+            <h2>About you and the role</h2>
+            <div class="group">
+              <button class="row link" id="resumeBtn">
+                <div class="row-text"><span>Resume</span><small>Sent word for word, so answers can use your own phrasing</small></div>
+                <span class="row-meta"><span id="resumeMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <button class="row link" id="profileBtn">
+                <div class="row-text"><span>Your details</span><small>Name, salary range, visa status, notice period</small></div>
+                <span class="row-meta"><span id="profileMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <button class="row link" id="jobBtn">
+                <div class="row-text"><span>Job description</span><small>Answers match your experience to it and use the company's name</small></div>
+                <span class="row-meta"><span id="jobMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+            </div>
+            <p class="tab-note" id="interviewOffNote" hidden>Interview mode is off: questions about you still use these, but answers aren't written in your voice, ready to say aloud.</p>
+          </div>
+
+          <div class="tab" data-tab="session" role="tabpanel" hidden>
+            <div class="group">
+              <div class="row">
+                <div class="row-text"><span>Spent this session</span><small id="spendMeta">Nothing spent yet</small></div>
+                <span class="row-meta" id="spendTotal"></span>
               </div>
+              <button class="row link" id="transcriptToggle">
+                <div class="row-text"><span>Transcript</span><small id="transcriptMeta">What Glance has heard so far</small></div>
+                <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <button class="row link" id="saveNotesBtn">
+                <div class="row-text"><span>Save notes</span><small id="saveNotesMeta">Summary, decisions, action items and full transcript, to Documents/Glance</small></div>
+                <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v9M6 9l4 4 4-4M4 16.5h12" /></svg></span>
+              </button>
+              <button class="row link" id="clearBtn">
+                <div class="row-text"><span>Clear session</span><small>Forget the transcript, answers and screenshots</small></div>
+              </button>
             </div>
-            <button class="row link" id="instructionsBtn">
-              <div class="row-text"><span>Custom instructions</span><small>Your own rules, added to every question</small></div>
-              <span class="row-meta"><span id="instructionsMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
-            </button>
-            <button class="row" id="autoScreenToggle" role="switch">
-              <div class="row-text"><span>Screenshot every question</span><small>For typed questions. Questions heard in a call are answered without one.</small></div>
-              <span class="switch" aria-hidden="true"></span>
-            </button>
           </div>
 
-          <h2>Listening</h2>
-          <div class="group">
-            <div class="row">
-              <div class="row-text"><span>Transcription</span><small>Accurate is slower but better with accents and noise</small></div>
-              <div class="seg" id="transcription" role="radiogroup">
-                <button role="radio" data-value="fast">Fast</button>
-                <button role="radio" data-value="accurate">Accurate</button>
+          <div class="tab" data-tab="general" role="tabpanel" hidden>
+            <h2>Listening</h2>
+            <div class="group">
+              <div class="row">
+                <div class="row-text"><span>Transcription</span><small>Accurate is slower but better with accents and noise</small></div>
+                <div class="seg" id="transcription" role="radiogroup">
+                  <button role="radio" data-value="fast">Fast</button>
+                  <button role="radio" data-value="accurate">Accurate</button>
+                </div>
               </div>
+              <label class="row stacked" for="vocabularyInput">
+                <div class="row-text"><span>Words to recognize</span><small>Names, products and jargon Glance should listen for, separated by commas</small></div>
+                <input id="vocabularyInput" maxlength="500" placeholder="e.g. Chinonso, KenchiOps, pgvector" spellcheck="false" />
+              </label>
             </div>
-            <div class="row">
-              <div class="row-text"><span>Your microphone</span><small>Strict ignores voices farther from the mic, like a TV or someone across the room</small></div>
-              <div class="seg" id="micMode" role="radiogroup">
-                <button role="radio" data-value="off">Off</button>
-                <button role="radio" data-value="normal">Normal</button>
-                <button role="radio" data-value="strict">Strict</button>
-              </div>
+
+            <h2>Privacy</h2>
+            <div class="group">
+              <button class="row" id="cloakToggle" role="switch">
+                <div class="row-text"><span>Hide from screen sharing</span><small>Leaves Glance out of shares, recordings and screenshots (⌘⇧H)</small></div>
+                <span class="switch" aria-hidden="true"></span>
+              </button>
             </div>
-            <label class="row stacked" for="vocabularyInput">
-              <div class="row-text"><span>Words to recognize</span><small>Names, products and jargon Glance should listen for, separated by commas</small></div>
-              <input id="vocabularyInput" maxlength="500" placeholder="e.g. Chinonso, KenchiOps, pgvector" spellcheck="false" />
-            </label>
-          </div>
 
-          <h2>Privacy</h2>
-          <div class="group">
-            <button class="row" id="cloakToggle" role="switch">
-              <div class="row-text"><span>Hide from screen sharing</span><small>Leaves Glance out of shares, recordings and screenshots (⌘⇧H)</small></div>
-              <span class="switch" aria-hidden="true"></span>
-            </button>
-          </div>
-
-          <h2>Session</h2>
-          <div class="group">
-            <button class="row link" id="transcriptToggle">
-              <div class="row-text"><span>Transcript</span><small id="transcriptMeta">What Glance has heard so far</small></div>
-              <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
-            </button>
-            <button class="row link" id="saveNotesBtn">
-              <div class="row-text"><span>Save notes</span><small id="saveNotesMeta">Summary, decisions, action items and full transcript, to Documents/Glance</small></div>
-              <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 3.5v9M6 9l4 4 4-4M4 16.5h12" /></svg></span>
-            </button>
-            <div class="row">
-              <div class="row-text"><span>Spending this session</span><small id="spendMeta">Nothing spent yet</small></div>
-              <span class="row-meta" id="spendTotal"></span>
+            <h2>Keyboard</h2>
+            <div class="group">
+              <button class="row link" id="welcomeAgainBtn">
+                <div class="row-text"><span>Show welcome again</span><small>Run the welcome and setup steps again</small></div>
+                <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+              <button class="row link" id="shortcutsBtn">
+                <div class="row-text"><span>Shortcuts</span><small>Change the keys Glance listens for anywhere</small></div>
+                <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
             </div>
-            <button class="row link" id="clearBtn">
-              <div class="row-text"><span>Clear session</span><small>Forget the transcript, answers and screenshots</small></div>
-            </button>
-          </div>
 
-          <h2>Keyboard</h2>
-          <div class="group">
-            <button class="row link" id="shortcutsBtn">
-              <div class="row-text"><span>Shortcuts</span><small>Change the keys Glance listens for anywhere</small></div>
-              <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
-            </button>
-          </div>
-
-          <h2>Account</h2>
-          <div class="group">
-            <button class="row link" id="keyBtn">
-              <div class="row-text"><span>Anthropic API key</span><small>Saved in your macOS keychain</small></div>
-              <span class="row-meta"><span id="keyMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
-            </button>
-          </div>
-
-          <div class="settings-foot">
-            <button class="ghost danger" id="quitBtn">Quit Glance</button>
+            <div class="settings-foot">
+              <button class="ghost danger" id="quitBtn">Quit Glance</button>
+            </div>
           </div>
         </section>
 
         <form class="instructions" id="instructionsForm" hidden>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
           <p class="lead">Custom instructions</p>
           <p class="hint">Added to Glance's built-in instructions on every question. Tell it how you like answers: tone, length, language, what to focus on, things to avoid. Longer instructions are compressed when you save, so each question sends fewer tokens.</p>
-          <textarea id="instructionsInput" rows="8" maxlength="5000" spellcheck="true" placeholder="For example: Answer in British English. When code is involved, use TypeScript. Explain like I'm a senior engineer, so skip the basics."></textarea>
+          <p class="hint caution" id="instructionsFormWarn" hidden>This looks like a resume. Paste it under Settings &gt; Interview &gt; Resume instead: custom instructions are compressed when saved, which rewrites wording; Resume is sent word for word.</p>
+          <textarea id="instructionsInput" rows="8" maxlength="12000" spellcheck="true" placeholder="For example: Answer in British English. When code is involved, use TypeScript. Explain like I'm a senior engineer, so skip the basics. For interviews: salary range, visa status, notice period (your resume goes under Resume)."></textarea>
           <details class="sent" id="sentBox" hidden>
             <summary id="sentSummary">What Glance sends</summary>
             <pre id="sentText"></pre>
@@ -175,7 +300,38 @@
           </div>
         </form>
 
+        <form class="instructions" id="profileForm" hidden>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
+          <p class="lead">Your details</p>
+          <p class="hint">Sent with every question, like your resume, so answers about salary, visa or notice give real figures. All optional.</p>
+          <div class="ob-grid">
+            <label>Name<input id="pfName" maxlength="200" autocomplete="off" /></label>
+            <label>Salary range<input id="pfSalary" maxlength="200" placeholder="e.g. $140k to $160k" autocomplete="off" /></label>
+            <label>Visa status<input id="pfVisa" maxlength="200" placeholder="e.g. Needs sponsorship" autocomplete="off" /></label>
+            <label>Notice period<input id="pfNotice" maxlength="200" placeholder="e.g. 4 weeks" autocomplete="off" /></label>
+          </div>
+          <div class="formrow">
+            <button type="button" class="ghost" id="profileCancel">Cancel</button>
+            <button type="submit" class="primary">Save</button>
+          </div>
+        </form>
+
+        <form class="instructions" id="docForm" hidden>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
+          <p class="lead" id="docLead"></p>
+          <p class="hint" id="docHint"></p>
+          <textarea id="docInput" rows="10" spellcheck="true"></textarea>
+          <div class="formrow">
+            <span class="charcount" id="docCount"></span>
+            <button type="button" class="ghost" id="docImport">Import file…</button>
+            <button type="button" class="ghost danger" id="docClear">Clear</button>
+            <button type="button" class="ghost" id="docCancel">Cancel</button>
+            <button type="submit" class="primary">Save</button>
+          </div>
+        </form>
+
         <section class="shortcuts" id="shortcutsPanel" hidden>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
           <p class="lead">Shortcuts</p>
           <p class="hint">Click a shortcut, then press the new keys. Use at least ⌘, ⌥ or ⌃ so it doesn't clash with typing.</p>
           <div class="group" id="shortcutList"></div>
@@ -186,12 +342,23 @@
         </section>
 
         <form class="keyform" id="keyForm" hidden>
-          <p class="lead" id="keyLead">Add your Anthropic API key to start.</p>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
+          <button type="button" class="back" id="keyStepBack" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Back</button>
+          <span class="step-label" id="keyStepLabel" hidden></span>
+          <p class="lead" id="keyLead">Choose who answers, then add an API key.</p>
+          <div class="seg" id="keyProvider" role="radiogroup">
+            <button type="button" role="radio" data-value="anthropic">Anthropic</button>
+            <button type="button" role="radio" data-value="openai">OpenAI-compatible</button>
+          </div>
+          <div class="keyfields" id="openaiFields" hidden>
+            <label>Base URL<input id="keyBaseUrl" type="url" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" /></label>
+            <label>Model<input id="keyModel" placeholder="e.g. gpt-4o, gemini-2.5-pro, llama3.1" autocomplete="off" spellcheck="false" /></label>
+          </div>
           <p class="hint" id="keyHint">Create one at console.anthropic.com. It's saved in your macOS keychain.</p>
           <div class="keyrow">
             <input id="keyInput" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
             <button type="button" class="ghost" id="pasteKeyBtn">Paste</button>
-            <button type="submit" class="primary">Save key</button>
+            <button type="submit" class="primary">Save</button>
           </div>
           <div class="keyrow secondary" id="keyManage" hidden>
             <button type="button" class="ghost" id="cancelKeyBtn">Cancel</button>
@@ -212,6 +379,7 @@
         </article>
 
         <section class="transcript" id="transcript" hidden>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
           <p class="empty-note" id="transcriptEmpty">Nothing heard yet. Press Listen to start.</p>
         </section>
       </main>
@@ -230,14 +398,23 @@
               <svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg>
             </button>
           </nav>
+          <div class="modepick" id="modePick">
+            <button type="button" class="modepick-btn" id="modeBtn" aria-haspopup="menu" aria-expanded="false"><span id="modeLabel">Meeting</span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8 10 12.5 14.5 8" /></svg></button>
+            <div class="modemenu" id="modeMenu" role="menu" aria-label="Answer mode" hidden>
+              <button type="button" role="menuitemradio" data-value="meeting"><span>Meeting</span><small id="modeMeetingHint">Brief answers about the call and your screen</small></button>
+              <button type="button" role="menuitemradio" data-value="interview"><span>Interview</span><small>Answers as you, from your resume, ready to say aloud</small></button>
+            </div>
+          </div>
           <form class="ask" id="askForm">
-            <input id="question" placeholder="Type a question, or just press Ask" autocomplete="off" />
+            <input id="question" placeholder="Type a question, or press Ask" autocomplete="off" />
             <button type="submit" class="primary" id="askBtn">Ask</button>
           </form>
         </div>
       </footer>
     </div>
     <script src="questions.js"></script>
+    <script src="hints.js"></script>
+    <script src="onboarding.js"></script>
     <script src="highlight.js"></script>
     <script src="markdown.js"></script>
     <script src="app.js"></script>

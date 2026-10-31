@@ -34,3 +34,12 @@ test("escapes HTML everywhere", () => {
 test("multiplication is not italics", () => {
   assert.equal(md("2 * 3 * 4"), "<p>2 * 3 * 4</p>");
 });
+
+test("underscore italics render, snake_case stays", () => {
+  assert.ok(md("_Assumed 5 years of Go._").includes("<em>Assumed 5 years of Go.</em>"));
+  assert.ok(!md("call user_id_map here").includes("<em>"));
+});
+
+test("placeholder brackets stay as text", () => {
+  assert.ok(md("I led [your example: a team project] last year").includes("[your example: a team project]"));
+});

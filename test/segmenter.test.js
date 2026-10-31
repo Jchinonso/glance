@@ -33,24 +33,24 @@ test("ignores short blips", () => {
 
 test("listener refuses to start without its tools, with one clear error", async () => {
   const { Listener } = await import("../src/audio.js");
-  const l = new Listener({ modelPath: "/nonexistent/model.bin", whisperBinary: "whisper-cli-missing", soxBinary: "rec-missing" });
+  const l = new Listener({ modelPath: "/nonexistent/model.bin", whisperBinary: "whisper-cli-missing" });
   const errors = [];
   l.on("error", (e) => errors.push(e));
   assert.equal(l.start(), false);
   assert.equal(errors.length, 1);
-  assert.match(errors[0], /brew install sox whisper-cpp/);
+  assert.match(errors[0], /brew install whisper-cpp/);
 });
 
 test("listener reports when capture dies on its own", async () => {
   const { Listener } = await import("../src/audio.js");
   const here = new URL("../package.json", import.meta.url).pathname; // any existing file stands in for the model
-  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", soxBinary: "/usr/bin/false", audioteePath: "/usr/bin/true" });
+  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: "/usr/bin/false" });
   const errors = [];
   l.on("error", (e) => errors.push(e));
   const ended = new Promise((resolve) => l.on("ended", resolve));
   assert.equal(l.start(), true);
   await ended;
-  assert.ok(errors.some((e) => /Microphone capture stopped/.test(e)), errors.join(" | "));
+  assert.ok(errors.some((e) => /System audio/.test(e)), errors.join(" | "));
   assert.equal(l.running, false);
 });
 
@@ -72,17 +72,4 @@ test("steady background noise is not mistaken for speech", () => {
   seg.push(pcm(1.5, 12000));
   seg.push(noise(1.2, 1500));
   assert.equal(count, fromNoise + 1);
-});
-
-test("a mic floor ignores faint distant sound but keeps normal speech", () => {
-  const seg = new Segmenter({ minLevel: 250 });
-  const out = [];
-  seg.on("segment", (b) => out.push(b.length));
-  seg.push(pcm(0.6, 0));
-  seg.push(pcm(1.5, 300)); // faint: a TV across the room
-  seg.push(pcm(1.2, 0));
-  assert.equal(out.length, 0);
-  seg.push(pcm(1.5, 3000)); // speaking into the mic
-  seg.push(pcm(1.2, 0));
-  assert.equal(out.length, 1);
 });

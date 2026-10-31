@@ -1,5 +1,5 @@
 // Loaded before app.js as a plain script (renderMarkdown becomes a global).
-// Renders the Markdown subset Claude writes in answers: fenced code (colored
+// Renders the Markdown subset models write in answers: fenced code (colored
 // by highlightCode), headings, bullet and numbered lists, tables, bold,
 // italics, inline code and links. Parsed line by line, so a heading or list
 // directly under a paragraph still renders. All text is escaped.
@@ -17,6 +17,7 @@ function inlineMd(text) {
       return escapeMd(part)
         .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
         .replace(/(^|[^*\w])\*([^*\s][^*]*?)\*(?!\w)/g, "$1<em>$2</em>")
+        .replace(/(^|[^_\w])_([^_\s][^_]*?)_(?![\w_])/g, "$1<em>$2</em>") // _italic_, not snake_case
         .replace(/\[([^\]]+)\]\((https?:[^)\s]+)\)/g, '<span class="link" title="$2">$1</span>');
     })
     .join("");

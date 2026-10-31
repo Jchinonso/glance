@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("glance", {
   toggleListening: () => ipcRenderer.invoke("toggle-listening"),
   setApiKey: (key) => ipcRenderer.invoke("set-api-key", key),
   setSetting: (name, value) => ipcRenderer.invoke("set-setting", name, value),
+  importDoc: (kind) => ipcRenderer.invoke("import-doc", kind),
   readClipboard: () => ipcRenderer.invoke("clipboard-read"),
   writeClipboard: (text) => ipcRenderer.invoke("clipboard-write", text),
   setShortcut: (action, accel) => ipcRenderer.invoke("set-shortcut", action, accel),

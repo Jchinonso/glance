@@ -1,4 +1,4 @@
-// Mechanical caveman-style compression for text sent to Claude on every
+// Mechanical caveman-style compression for text sent to the model on every
 // question (transcript, earlier answers, custom instructions). It applies the
 // caveman skill's safe rules without an extra API call:
 //   - drop articles, filler, hedging and spoken disfluencies
@@ -80,8 +80,10 @@ function payload(text) {
 // uses every kind of negation the original did. Merged duplicates pass.
 export function keepsFacts(original, rewrite) {
   if (!payload(original).every((p) => rewrite.includes(p))) return false;
-  // "don't", "can't" and "cannot" all count as "not".
-  const words = (t) => new Set((t.match(NEGATION_RE) ?? []).map((w) => (/n't$|^cannot$/i.test(w) ? "not" : w.toLowerCase())));
+  // Plain negations are interchangeable ("do not mention" and "never mention"
+  // mean the same), so they count as one kind; only, except, unless and
+  // without each change meaning differently and must survive as themselves.
+  const words = (t) => new Set((t.match(NEGATION_RE) ?? []).map((w) => (/^(?:not|never|no|none|nothing|cannot)$|n't$/i.test(w) ? "not" : w.toLowerCase())));
   const after = words(rewrite);
   return [...words(original)].every((w) => after.has(w));
 }

@@ -70,3 +70,10 @@ test("keepsFacts: rejects a rewrite that lost a negation, number, link or code",
   assert.ok(!keepsFacts(original, "Never deploy Fridays. Port 8080. Run `npm ci`."));
   assert.ok(!keepsFacts(original, "Never deploy Fridays. Port 8080. See https://x.io/a, run npm ci."));
 });
+
+test("keepsFacts: plain negations are interchangeable, only/except/unless are not", () => {
+  const original = "Please do not mention my age. Only bring up salary if asked.";
+  assert.ok(keepsFacts(original, "Never mention my age. Salary only if asked."));
+  assert.ok(!keepsFacts(original, "Never mention my age. Bring up salary if asked."));
+  assert.ok(!keepsFacts("Do not deploy on Fridays.", "Deploy on Fridays."));
+});

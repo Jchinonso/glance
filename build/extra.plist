@@ -2,8 +2,6 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>NSMicrophoneUsageDescription</key>
-  <string>Glance transcribes your side of the conversation.</string>
   <key>NSAudioCaptureUsageDescription</key>
   <string>Glance transcribes the other people in your call.</string>
   <key>NSScreenCaptureUsageDescription</key>

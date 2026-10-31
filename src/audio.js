@@ -9,7 +9,7 @@ import { AudioTee } from "audiotee";
 const SAMPLE_RATE = 16000;
 const FRAME = 480; // 30 ms at 16 kHz
 const PRE_ROLL_FRAMES = 10; // keep 300 ms before speech starts
-const END_SILENCE_FRAMES = 27; // ~800 ms of silence ends a segment
+const END_SILENCE_FRAMES = 20; // ~600 ms of silence ends a segment; a question split by a pause is rejoined later
 const MAX_SEGMENT_FRAMES = 500; // 15 s hard cap
 const MIN_SPEECH_FRAMES = 12; // drop blips under ~360 ms
 const FLOOR_WINDOW_FRAMES = 167; // ~5 s of history for the noise floor
@@ -19,11 +19,8 @@ const FLOOR_WINDOW_FRAMES = 167; // ~5 s of history for the noise floor
 // speech always has pauses, so this tracks the room even when it gets louder
 // (a fan, music), which a silence-only estimate never notices.
 export class Segmenter extends EventEmitter {
-  // minLevel: frames quieter than this never count as speech. The mic uses it
-  // in "strict" mode to ignore distant voices (a TV, someone across the room).
-  constructor({ minLevel = 0 } = {}) {
+  constructor() {
     super();
-    this.minLevel = minLevel;
     this.pending = Buffer.alloc(0);
     this.preRoll = [];
     this.frames = [];
@@ -32,7 +29,6 @@ export class Segmenter extends EventEmitter {
     this.speaking = false;
     this.floor = 200;
     this.history = [];
-    this.lastSpeechAt = 0;
   }
 
   push(chunk) {
@@ -54,8 +50,7 @@ export class Segmenter extends EventEmitter {
     this.history.push(rms);
     if (this.history.length > FLOOR_WINDOW_FRAMES) this.history.shift();
     this.floor = this.floor * 0.9 + Math.min(...this.history) * 0.1;
-    const isSpeech = rms > Math.max(this.floor * 2.5 + 150, this.minLevel);
-    if (isSpeech) this.lastSpeechAt = Date.now();
+    const isSpeech = rms > this.floor * 2.5 + 150;
 
     const copy = Buffer.from(buf);
     if (!this.speaking) {
@@ -89,10 +84,6 @@ export class Segmenter extends EventEmitter {
     this.frames = [];
     this.speechFrames = 0;
     this.silence = 0;
-  }
-
-  isActive(withinMs = 600) {
-    return this.speaking || Date.now() - this.lastSpeechAt < withinMs;
   }
 }
 
@@ -141,6 +132,78 @@ export async function whisper({ modelPath, binary, prompt }, pcm) {
   });
 }
 
+// Keeps the speech model loaded between segments. whisper-cli reloads it for
+// every segment (~0.9 s for small.en), most of the wait before a heard
+// question shows up. transcribe() returns null when the server isn't usable,
+// and the caller falls back to whisper-cli. A server that dies mid-call is
+// restarted a couple of times, so one crash doesn't slow the rest of the call.
+const SERVER_RESTARTS = 2;
+
+export class WhisperServer {
+  constructor(binary) {
+    this.binary = binary;
+    this.proc = null;
+    this.url = null;
+    this.opts = null; // set while the server should be running
+    this.restarts = 0;
+    this.ready = Promise.resolve(false);
+    process.on("exit", () => this.stop()); // never leave the model loaded after quit
+  }
+
+  start(opts, { restart = false } = {}) {
+    this.stop();
+    if (!restart) this.restarts = 0;
+    this.opts = opts;
+    const { modelPath, prompt } = opts;
+    if (!path.isAbsolute(this.binary) || !existsSync(this.binary)) return;
+    const port = 20000 + Math.floor(Math.random() * 40000);
+    const proc = spawn(this.binary, ["-m", modelPath, "-l", "en", "-nt", "-sns", "-t", "4", "--host", "127.0.0.1", "--port", String(port), ...(prompt ? ["--prompt", prompt] : [])], { stdio: "ignore" });
+    proc.on("error", () => {});
+    proc.on("exit", () => {
+      if (this.proc === proc) this.proc = this.url = null;
+    });
+    this.proc = proc;
+    const url = `http://127.0.0.1:${port}`;
+    // Ready once it answers HTTP; the model loads in about a second.
+    this.ready = (async () => {
+      for (let i = 0; i < 80 && this.proc === proc; i++) {
+        try {
+          await fetch(url, { signal: AbortSignal.timeout(1000) });
+          this.url = url;
+          return true;
+        } catch {}
+        await new Promise((r) => setTimeout(r, 250));
+      }
+      return false;
+    })();
+  }
+
+  async transcribe(pcm) {
+    // Died since it started: restart it; this segment uses whisper-cli meanwhile.
+    if (!this.proc && this.opts && this.restarts < SERVER_RESTARTS && existsSync(this.binary)) {
+      this.restarts++;
+      this.start(this.opts, { restart: true });
+      return null;
+    }
+    if (!this.proc || !(await this.ready) || !this.url) return null;
+    const form = new FormData();
+    form.append("file", new Blob([wav(pcm)], { type: "audio/wav" }), "audio.wav");
+    form.append("response_format", "text");
+    try {
+      const res = await fetch(`${this.url}/inference`, { method: "POST", body: form, signal: AbortSignal.timeout(30000) });
+      return res.ok ? (await res.text()).replace(/\s+/g, " ").trim() : null;
+    } catch {
+      return null;
+    }
+  }
+
+  stop() {
+    const proc = this.proc;
+    this.proc = this.url = this.opts = null;
+    proc?.kill("SIGTERM");
+  }
+}
+
 // Apps launched from Finder don't inherit the shell PATH, so find Homebrew tools directly.
 function findBinary(name) {
   for (const dir of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
@@ -150,29 +213,25 @@ function findBinary(name) {
   return name;
 }
 
-// Captures the mic ("me") and macOS system audio ("them"), segments speech,
-// and emits transcript lines. Transcription runs one segment at a time.
+// Captures macOS system audio (the other side of the call, "them"), segments
+// speech, and emits transcript lines, transcribed one segment at a time. The
+// mic is never recorded.
 export class Listener extends EventEmitter {
-  // micLevel: null = don't capture the mic at all; otherwise the Segmenter minLevel.
-  constructor({ modelPath, prompt, micLevel = 0, audioteePath, whisperBinary = findBinary("whisper-cli"), soxBinary = findBinary("rec") }) {
+  constructor({ modelPath, prompt, audioteePath, whisperBinary = findBinary("whisper-cli") }) {
     super();
-    this.micLevel = micLevel;
     this.audioteePath = audioteePath;
     this.opts = { modelPath, prompt, binary: whisperBinary };
-    this.soxBinary = soxBinary;
-    this.queue = Promise.resolve();
+    this.server = new WhisperServer(findBinary("whisper-server"));
+    this.pending = [];
+    this.working = false;
     this.running = false;
   }
 
   // Returns false (with one clear error) when a required tool is missing.
   start() {
     if (this.running) return true;
-    const missing = [
-      [this.soxBinary, "sox"],
-      [this.opts.binary, "whisper-cpp"],
-    ].filter(([bin]) => !path.isAbsolute(bin) || !existsSync(bin));
-    if (missing.length) {
-      this.emit("error", `Listening needs ${missing.map(([, pkg]) => pkg).join(" and ")}. Install with: brew install ${missing.map(([, pkg]) => pkg).join(" ")}`);
+    if (!path.isAbsolute(this.opts.binary) || !existsSync(this.opts.binary)) {
+      this.emit("error", "Listening needs whisper-cpp. Install with: brew install whisper-cpp");
       return false;
     }
     if (!existsSync(this.opts.modelPath)) {
@@ -180,72 +239,68 @@ export class Listener extends EventEmitter {
       return false;
     }
     this.running = true;
-    this.me = new Segmenter({ minLevel: this.micLevel ?? 0 });
+    this.reportedFailure = false;
+    this.server.start(this.opts);
     this.them = new Segmenter();
-    this.me.on("segment", (pcm) => {
-      // Without headphones the mic hears the speakers; skip echo of "them".
-      if (this.them.isActive()) return;
-      this.enqueue("me", pcm);
-    });
-    this.them.on("segment", (pcm) => this.enqueue("them", pcm));
+    this.them.on("segment", (pcm) => this.enqueue(pcm));
 
-    if (this.micLevel !== null) this.startMic();
-
-    this.tee = new AudioTee({ sampleRate: SAMPLE_RATE, chunkDurationMs: 100, binaryPath: this.audioteePath });
-    this.tee.on("data", ({ data }) => this.them.push(data));
-    this.tee.on("error", (e) => this.emit("error", `System audio failed: ${e.message}`));
-    this.tee.start().catch((e) => this.emit("error", `System audio failed: ${e.message}`));
-    return true;
-  }
-
-  startMic() {
-    this.mic = spawn(this.soxBinary, ["-q", "-c", "1", "-r", String(SAMPLE_RATE), "-b", "16", "-e", "signed-integer", "-t", "raw", "-"]);
-    this.mic.stdout.on("data", (d) => this.me.push(d));
-    this.mic.on("error", (e) => this.emit("error", `Mic capture failed: ${e.message}`));
-    const mic = this.mic;
-    mic.on("exit", (code) => {
-      // Only this run's process matters; an old one exiting after a restart doesn't.
-      if (!this.running || this.mic !== mic) return;
-      this.emit("error", `Microphone capture stopped${code ? ` (exit ${code})` : ""}. Check the input device and microphone permission, then press Listen again.`);
+    const tee = new AudioTee({ sampleRate: SAMPLE_RATE, chunkDurationMs: 100, binaryPath: this.audioteePath });
+    this.tee = tee;
+    // System audio is the only source, so losing it ends listening instead of
+    // leaving Listen on while nothing is captured. Our own stop() is ignored.
+    const failed = (text) => {
+      if (!this.running || this.tee !== tee) return;
+      this.emit("error", `${text} Check System Settings > Privacy & Security > Screen & System Audio Recording, then press Listen again.`);
       this.stop();
       this.emit("ended");
-    });
-  }
-
-  // Off/normal/strict while running: start or stop the mic, or change its threshold.
-  setMicLevel(level) {
-    this.micLevel = level;
-    if (!this.running) return;
-    if (level === null) {
-      const mic = this.mic;
-      this.mic = null;
-      mic?.kill("SIGTERM");
-    } else {
-      this.me.minLevel = level;
-      if (!this.mic) this.startMic();
-    }
+    };
+    tee.on("data", ({ data }) => this.them.push(data));
+    tee.on("error", (e) => failed(`System audio failed: ${e.message}.`));
+    tee.on("stop", () => failed("System audio capture stopped."));
+    tee.start().catch((e) => failed(`System audio failed: ${e.message}.`));
+    return true;
   }
 
   // Takes effect from the next segment; no restart needed.
   setTranscription({ modelPath, prompt }) {
     this.opts = { ...this.opts, modelPath, prompt };
+    if (this.running) this.server.start(this.opts);
   }
 
   stop() {
     if (!this.running) return;
     this.running = false;
-    this.mic?.kill("SIGTERM");
     this.tee?.stop().catch(() => {});
-    this.me?.flush();
     this.them?.flush();
+    if (!this.working) this.server.stop();
   }
 
-  enqueue(role, pcm) {
-    const at = Date.now();
-    this.queue = this.queue.then(async () => {
-      const { text, error } = await whisper(this.opts, pcm);
-      if (error) this.emit("error", `Transcription failed: ${error}`);
-      else if (text) this.emit("line", { role, text, at });
-    });
+  enqueue(pcm) {
+    this.pending.push({ pcm, at: Date.now() });
+    this.drain();
+  }
+
+  async drain() {
+    if (this.working) return;
+    this.working = true;
+    let item;
+    while ((item = this.pending.shift())) {
+      const { pcm, at } = item;
+      let text = await this.server.transcribe(pcm);
+      if (text === null) {
+        const r = await whisper(this.opts, pcm);
+        if (r.error) {
+          // Once per listen: a broken transcriber fails on every segment.
+          if (!this.reportedFailure) this.emit("error", `Transcription failed: ${r.error}`);
+          this.reportedFailure = true;
+          continue;
+        }
+        text = r.text;
+      } else if (NOISE.test(text)) text = "";
+      // start: when the speech began; at: when it ended.
+      if (text) this.emit("line", { role: "them", text, at, start: at - Math.round((pcm.length / 2 / SAMPLE_RATE) * 1000) });
+    }
+    this.working = false;
+    if (!this.running) this.server.stop(); // stopped meanwhile: free the model now the last segments are done
   }
 }
