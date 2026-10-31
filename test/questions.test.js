@@ -100,3 +100,17 @@ test("pending question: keeps the lead-in said just before it", () => {
   assert.equal(nextPendingQuestion(null, q, [line("them", "Any questions so far?", 9000, 8000)]).text, q.text);
   assert.equal(nextPendingQuestion(null, q, [line("them", "So that's the team.", 4000, 2000)]).text, q.text);
 });
+
+test("pending question: pieces split by pauses read as one sentence", () => {
+  let p = nextPendingQuestion(null, line("them", "Can you tell me about a time?", 4000, 1800));
+  p = nextPendingQuestion(p, line("them", "When you had to deal with a difficult stakeholder.", 8100, 4500));
+  p = nextPendingQuestion(p, line("them", "And how you handled it?", 10200, 8100));
+  assert.equal(p.text, "Can you tell me about a time when you had to deal with a difficult stakeholder and how you handled it?");
+  // A "how/what" clause after a lead-in gets a comma.
+  const lead = [line("them", "So looking at your experience with front-end performance.", 9000, 6000)];
+  assert.equal(nextPendingQuestion(null, line("them", "How would you make a slow page load faster?", 12000, 9800), lead).text, "So looking at your experience with front-end performance, how would you make a slow page load faster?");
+  // A new sentence stays a new sentence, including one opening with "So".
+  assert.equal(nextPendingQuestion(null, line("them", "So to start, can you tell me a bit about yourself?", 6000, 3800), [line("them", "Hi, thanks for joining today.", 3000, 1500)]).text, "Hi, thanks for joining today. So to start, can you tell me a bit about yourself?");
+  const greet = [line("them", "Great!", 2000, 1500)];
+  assert.equal(nextPendingQuestion(null, line("them", "Can you tell me about yourself?", 5000, 3000), greet).text, "Great! Can you tell me about yourself?");
+});

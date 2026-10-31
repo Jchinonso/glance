@@ -48,15 +48,9 @@ const MODEL_HINTS = {
   "claude-haiku-5-5": "Haiku 5.5: fastest, about 1/40 of Opus's price",
 };
 let recording = null; // action whose shortcut is being recorded
-// Answers with key phrases open compact (bold line + phrases) or in full,
-// remembered per viewer.
-let answerView = (() => {
-  try {
-    return localStorage.getItem("glance.answerView") === "full" ? "full" : "compact";
-  } catch {
-    return "compact";
-  }
-})();
+// Interview answers open in full, or as key points (Settings > Interview >
+// Open answers as key points). The link on an answer switches just that view.
+let answerView = "full";
 let editingSaid = false; // the "I said something else" field is open
 
 const SHORTCUT_LABELS = {
@@ -132,7 +126,7 @@ function renderStrip() {
   const last = heard.at(-1);
   $("caption").hidden = !state.listening;
   if (pendingQuestion && state.listening) {
-    $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext" title="${escapeHtml(pendingQuestion.text)}">${escapeHtml(pendingQuestion.text)}</span><button type="button" class="answer-q" id="answerQBtn" title="Answer this question (⌘↵)">Answer</button>`;
+    $("caption").innerHTML = `<span class="qtag">Question</span><span class="qtext" title="${escapeHtml(pendingQuestion.text)}">${escapeHtml(pendingQuestion.text)}</span><button type="button" class="answer-q" id="answerQBtn" title="${waitingForQuestion ? "Waiting for them to finish the question" : "Answer this question (⌘↵)"}"${waitingForQuestion ? " disabled" : ""}>${waitingForQuestion ? "Waiting…" : "Answer"}</button>`;
   } else {
     $("caption").innerHTML = last ? line(last) : "Listening for speech…";
   }
@@ -156,6 +150,8 @@ function renderMenu() {
   $("modelHint").textContent = MODEL_HINTS[state.model] || "";
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
+  $("compactToggle").setAttribute("aria-checked", String(!!state.compactAnswers));
+  $("autoAnswerToggle").setAttribute("aria-checked", String(!!state.autoAnswer));
   const sp = state.spend || { input: 0, output: 0, dollars: 0 };
   $("spendTotal").textContent = sp.dollars ? `about ${formatDollars(sp.dollars)}` : "";
   $("spendMeta").textContent = sp.dollars
@@ -399,17 +395,72 @@ function hasSeenAnswer() {
   }
 }
 
-function submit() {
+// Answer pressed while the other side is still finishing the question (or
+// its last words are still being transcribed): wait for the rest, so half a
+// question isn't sent. Pieces transcribe one at a time (about a second each),
+// so a question split by two pauses can take 5 s to come in; the cap only
+// matters if they keep talking.
+const FINISH_WAIT_MS = 8000;
+let waitingForQuestion = false;
+let stillHearing = () => g.stillHearing(); // replaced in the UI tests
+
+async function submit() {
   if (onboarding) return; // shortcuts wait until setup is done
   if (state.busy) return g.cancel();
+  if (waitingForQuestion) return;
+  autoAnswerPending = false;
+  lastAutoQuestion = null;
+  const typed = $("question").value.trim();
+  $("question").value = "";
+  if (!typed && state.listening && pendingQuestion && (await stillHearing())) {
+    waitingForQuestion = true;
+    renderStrip();
+    const end = Date.now() + FINISH_WAIT_MS;
+    while (Date.now() < end && (await stillHearing())) await new Promise((r) => setTimeout(r, 150));
+    waitingForQuestion = false;
+  }
   // Nothing typed but a question was just heard: answer exactly that one. It
   // came from the call, so the screen isn't attached unless it refers to it.
-  const typed = $("question").value.trim();
   const heard = !typed && state.listening && pendingQuestion?.text;
-  $("question").value = "";
   view = "answers";
   g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard) });
 }
+
+// Auto-answer (Interview mode, listening, Settings > Interview): once a
+// question is pending and the other side has gone quiet for QUIET_MS (speech
+// over and transcribed), answer it as if Answer were pressed. It never
+// interrupts an answer you asked for or a question you're typing, and skips
+// while a form is open. Each question is answered once; earlier answers stay.
+const QUIET_MS = 300;
+let autoTimer = null;
+let autoAnswerId = null; // the answer auto-answer started, while it streams
+// The question auto-answer last answered ({ text, at }): if they pause longer
+// than expected and then carry on, the whole question is answered again.
+let lastAutoQuestion = null;
+const autoAnswerOn = () => !!state.autoAnswer && state.style === "interview" && !!state.listening && !onboarding;
+function watchForQuestion() {
+  if (autoTimer || !autoAnswerOn() || !pendingQuestion) return;
+  let quietSince = null;
+  autoTimer = setInterval(async () => {
+    const own = state.busy && autoAnswerId !== answers.at(-1)?.id; // you asked for the one streaming
+    if (!autoAnswerOn() || !pendingQuestion || waitingForQuestion) return stopWatching();
+    if (own || $("question").value.trim() || panelOpen() || panel === "settings") return; // keep watching
+    if (await stillHearing()) return void (quietSince = null);
+    quietSince ??= Date.now();
+    if (Date.now() - quietSince < QUIET_MS) return;
+    stopWatching();
+    const text = pendingQuestion.text;
+    lastAutoQuestion = { ...pendingQuestion };
+    view = "answers";
+    autoAnswerPending = true;
+    g.ask(text, { heard: !mentionsScreen(text) });
+  }, 100);
+}
+function stopWatching() {
+  clearInterval(autoTimer);
+  autoTimer = null;
+}
+let autoAnswerPending = false; // the next answer-start is auto-answer's
 
 g.on("state", (s) => {
   const before = state;
@@ -427,8 +478,15 @@ function onTranscript(l) {
   heard.push(l);
   state.transcriptCount = (state.transcriptCount || 0) + 1;
   pendingQuestion = nextPendingQuestion(pendingQuestion, l, heard.slice(0, -1));
+  // Carries on a question auto-answer already started on: ask the whole thing.
+  if (lastAutoQuestion && l.role === "them") {
+    // Same rule as nextPendingQuestion: carrying on beats a new question.
+    if (l.start - lastAutoQuestion.at < CONTINUE_MS) pendingQuestion = nextPendingQuestion(lastAutoQuestion, l);
+    lastAutoQuestion = null;
+  }
   renderStrip();
   renderTranscriptLine(l);
+  watchForQuestion();
 }
 g.on("transcript", onTranscript);
 g.on("focus-input", () => $("question").focus());
@@ -436,7 +494,10 @@ g.on("submit", submit);
 g.on("snap-submit", snapSubmit);
 
 g.on("answer-start", ({ id, question }) => {
-  answers.push({ id, question, text: "", status: "streaming" });
+  answers.push({ id, question, text: "", status: "streaming", auto: autoAnswerPending });
+  autoAnswerId = autoAnswerPending ? id : null;
+  autoAnswerPending = false;
+  answerView = state.compactAnswers ? "compact" : "full";
   editingSaid = false;
   page = answers.length - 1;
   if (view === "transcript") backToSettings = false;
@@ -454,15 +515,14 @@ g.on("answer-start", ({ id, question }) => {
     localStorage.setItem("glance.seenAnswer", "1");
   } catch {}
   renderStage();
+  $("stage").scrollTop = 0;
 });
 g.on("answer-delta", ({ id, text }) => {
   const a = answers.find((x) => x.id === id);
   if (!a) return;
   a.text += text;
-  if (answers[page] === a) {
-    renderStage();
-    $("stage").scrollTop = $("stage").scrollHeight;
-  }
+  // The answer grows below while you read it from the top; no scrolling.
+  if (answers[page] === a) renderStage();
 });
 g.on("answer-end", ({ id, error, aborted, usage }) => {
   const i = answers.findIndex((x) => x.id === id);
@@ -596,9 +656,6 @@ $("copyBtn").addEventListener("click", () => {
 });
 $("viewToggle").addEventListener("click", () => {
   answerView = answerView === "compact" ? "full" : "compact";
-  try {
-    localStorage.setItem("glance.answerView", answerView);
-  } catch {}
   renderStage();
 });
 // Clicking the key phrases opens the full answer.
@@ -650,6 +707,11 @@ $("style").addEventListener("click", (e) => {
 });
 $("cloakBtn").addEventListener("click", () => g.setSetting("invisible", !state.invisible));
 $("cloakToggle").addEventListener("click", () => g.setSetting("invisible", !state.invisible));
+$("autoAnswerToggle").addEventListener("click", () => g.setSetting("autoAnswer", !state.autoAnswer));
+$("compactToggle").addEventListener("click", () => {
+  answerView = state.compactAnswers ? "full" : "compact"; // the answer on screen follows
+  g.setSetting("compactAnswers", !state.compactAnswers);
+});
 $("autoScreenToggle").addEventListener("click", () => g.setSetting("autoScreen", !state.autoScreen));
 // Click: screenshot and answer. Shift-click: add to the tray without asking yet.
 $("shotBtn").addEventListener("click", (e) => (e.shiftKey ? g.addShot() : snapSubmit()));

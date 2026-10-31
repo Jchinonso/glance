@@ -52,6 +52,10 @@ const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openai
   // Your details go with every question like the resume. jdCheckedAt: when the
   // job description was last confirmed for an interview (ms; 0 = ask again).
   onboarded: false, profileName: "", salary: "", visa: "", notice: "", jdCheckedAt: 0,
+  // Interview answers open as key points instead of in full.
+  compactAnswers: false,
+  // Interview mode, while listening: answer a heard question once they finish.
+  autoAnswer: true,
   apiKey: null, openaiKey: null };
 const PROFILE_FIELDS = ["profileName", "salary", "visa", "notice"];
 const profile = () => ({ name: config.profileName, salary: config.salary, visa: config.visa, notice: config.notice });
@@ -225,6 +229,8 @@ function state() {
     transcription: config.transcription,
     vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
+    compactAnswers: config.compactAnswers,
+    autoAnswer: config.autoAnswer,
     shots: shots.map(({ id, thumb }) => ({ id, thumb })),
     hasKey: canAsk(),
     keyHint: apiKey() ? apiKey().slice(-4) : null,
@@ -817,6 +823,7 @@ ipcMain.handle("import-doc", async (_e, kind) => {
   }
 });
 ipcMain.handle("cancel", () => current?.abort());
+ipcMain.handle("still-hearing", () => !!listener?.hearing());
 // What the user actually said instead of an answer; later questions get it in
 // place of the suggestion. Empty clears it.
 ipcMain.handle("set-said", (_e, id, text) => {
@@ -861,6 +868,8 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   }
   else if (name === "effort" && ["low", "medium", "high"].includes(value)) config.effort = value;
   else if (name === "autoScreen") config.autoScreen = !!value;
+  else if (name === "compactAnswers") config.compactAnswers = !!value;
+  else if (name === "autoAnswer") config.autoAnswer = !!value;
   else if (name === "style" && ["brief", "natural", "interview"].includes(value)) config.style = value;
   else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
     config.transcription = value;

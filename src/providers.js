@@ -225,7 +225,8 @@ export function createProvider(settings) {
   return (PROVIDERS[settings.provider] || PROVIDERS.anthropic).create(settings);
 }
 
-// True when the error is a user abort, from either provider.
+// True when the error is a user abort, from either provider. The Anthropic
+// SDK's abort error doesn't set its name, so it's matched by class.
 export function isAbort(e) {
-  return e?.name === "APIUserAbortError" || e?.name === "AbortError" || e?.aborted === true;
+  return e instanceof Anthropic.APIUserAbortError || e?.name === "APIUserAbortError" || e?.name === "AbortError" || e?.aborted === true;
 }

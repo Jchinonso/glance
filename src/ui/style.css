@@ -215,6 +215,7 @@ body.collapsed .dock { display: none !important; }
   font-weight: 700;
 }
 .answer-q:hover { filter: brightness(1.08); }
+.answer-q:disabled { opacity: 0.65; filter: none; }
 .who.them { color: var(--violet); }
 .who.me { color: var(--ice); }
 

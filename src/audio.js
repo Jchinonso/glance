@@ -267,6 +267,12 @@ export class Listener extends EventEmitter {
     if (this.running) this.server.start(this.opts);
   }
 
+  // True while the other side is mid-phrase or their last words are still
+  // being transcribed: a question heard now may not be complete yet.
+  hearing() {
+    return this.running && (!!this.them?.speaking || this.working || this.pending.length > 0);
+  }
+
   stop() {
     if (!this.running) return;
     this.running = false;

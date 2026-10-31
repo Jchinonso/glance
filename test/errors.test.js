@@ -223,3 +223,20 @@ test("Anthropic: other bad requests are not retried", async () => {
     srv.close();
   }
 });
+
+test("Anthropic: stopping a stream counts as an abort, not an error", async () => {
+  const srv = await mockServer((r, res) => {
+    res.writeHead(200, { "content-type": "text/event-stream" });
+    res.write(`event: message_start\ndata: ${JSON.stringify({ type: "message_start", message: { id: "m1", type: "message", role: "assistant", content: [], model: "claude-opus-5-5", stop_reason: null, usage: { input_tokens: 1, output_tokens: 0 } } })}\n\n`);
+    res.write(`event: content_block_start\ndata: ${JSON.stringify({ type: "content_block_start", index: 0, content_block: { type: "text", text: "" } })}\n\n`);
+    res.write(`event: content_block_delta\ndata: ${JSON.stringify({ type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "slow" } })}\n\n`); // never ends
+  });
+  try {
+    const p = createProvider({ provider: "anthropic", apiKey: "sk-ant-test", anthropicBaseUrl: srv.url.replace(/\/v1$/, "") });
+    const job = p.stream({ model: "claude-opus-5-5", system: "s", parts: [{ type: "text", text: "q" }], maxTokens: 50, effort: "low", onText: () => job.abort() });
+    const e = await job.done.catch((err) => err);
+    assert.ok(isAbort(e), `${e?.constructor?.name}: ${e?.message}`);
+  } finally {
+    srv.close();
+  }
+});

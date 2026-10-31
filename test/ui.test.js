@@ -199,31 +199,41 @@ test("a typed question streams an answer", { skip }, async () => {
   assert.match(requests.at(-1).messages[1].content.at(-1).text, /Tell me about a reliability win/);
 });
 
-test("interview answers open compact: bold line and key phrases, with the full answer one click away", { skip }, async () => {
-  await run(`localStorage.removeItem("glance.answerView"); answerView = "compact"; renderStage();`);
+test("answers open in full by default; key points are a setting and a per-answer switch", { skip }, async () => {
+  const body = () => run(`return document.getElementById("answerBody").textContent;`);
+  assert.match(await body(), /errors fell 40%/, "full by default");
+  assert.ok(!(await body()).includes("Keys:"), "the Keys line never shows as text");
+  assert.equal(await run(`return document.getElementById("viewToggle").textContent;`), "Key points");
+  // Per answer: switch to key points and back.
+  await click("#viewToggle");
   assert.deepEqual(await run(`return [...document.querySelectorAll("#answerBody .keys li")].map((li) => li.textContent);`), ["billing migration", "40% fewer errors", "staged rollout"]);
-  assert.ok(!(await run(`return document.getElementById("answerBody").textContent.includes("errors fell");`)), "compact hides the paragraphs");
-  assert.match(await run(`return document.getElementById("answerBody").textContent;`), /Added: the side-by-side run/, "the note still shows");
-  assert.equal(await run(`return document.getElementById("viewToggle").textContent;`), "Full answer");
+  assert.ok(!(await body()).includes("errors fell"), "key points hide the paragraphs");
+  assert.match(await body(), /Added: the side-by-side run/, "the note still shows");
   await click("#viewToggle");
-  const full = await run(`return document.getElementById("answerBody").textContent;`);
-  assert.match(full, /errors fell 40%/);
-  assert.ok(!full.includes("Keys:"), "the Keys line never shows as text");
-  assert.equal(await run(`return localStorage.getItem("glance.answerView");`), "full");
-  await click("#viewToggle");
-  assert.equal(await run(`return answerView;`), "compact");
+  assert.match(await body(), /errors fell 40%/);
+  // The setting: new answers open as key points.
+  await run(`g.setSetting("compactAnswers", true);`);
+  await until(`state.compactAnswers === true`);
+  await run(`document.getElementById("question").value = "Another one"; document.getElementById("askBtn").click();`);
+  await until(`answers.at(-1).question === "Another one" && answers.at(-1).status === "done"`);
+  assert.equal(await run(`return document.querySelectorAll("#answerBody .keys li").length;`), 3);
+  await run(`g.setSetting("compactAnswers", false);`);
+  await until(`state.compactAnswers === false`);
+  await run(`page = answers.length - 2; renderStage();`); // back to the answer the next test uses
 });
 
 test("what you actually said goes with the next question instead of the suggestion", { skip }, async () => {
+  const count = await run(`return answers.length;`);
   await click("#saidOpen");
   assert.ok(await shown("saidForm"));
   await run(`document.getElementById("saidInput").value = "I talked about the Kafka pipeline instead"; document.getElementById("saidForm").requestSubmit();`);
   assert.match(await run(`return document.getElementById("saidText").textContent;`), /Kafka pipeline instead/);
   await run(`document.getElementById("question").value = "How did you measure it?"; document.getElementById("askBtn").click();`);
-  await until(`answers.length === 2 && answers[1].status === "done"`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`);
   const sent = requests.at(-1).messages[1].content.at(-1).text;
   assert.match(sent, /user said this instead of the suggestion\): I talked about Kafka pipeline instead/);
-  assert.ok(!sent.includes("errors fell"), "the replaced suggestion isn't sent");
+  // Every earlier answer is sent except the one you replaced (all share the fake text).
+  assert.equal(sent.split("errors fell").length - 1, count - 1, "the replaced suggestion isn't sent");
   // Earlier answers stay in the pager.
   await click("#prevBtn");
   assert.match(await run(`return document.getElementById("saidText").textContent;`), /Kafka/);
@@ -258,4 +268,82 @@ test("a question split by pauses shows whole, lead-in included, and Answer sends
   assert.ok(caption.lines >= 1 && caption.lines <= 3, `${caption.lines} lines`);
   await until(`answers.at(-1).question === ${JSON.stringify(full)} && answers.at(-1).status === "done"`);
   assert.match(requests.at(-1).messages[1].content.at(-1).text, /Question: So looking at your experience with distributed systems, how would you design a rate limiter for an API that serves millions of users\?/);
+});
+
+test("Answer pressed mid-question waits for the rest, then sends the whole question", { skip }, async () => {
+  const now = Date.now();
+  const asked = await run(`return answers.length;`);
+  const before = await run(`
+    let speaking = true;
+    window.finishSpeaking = () => (speaking = false);
+    stillHearing = async () => speaking;
+    state.listening = true;
+    onTranscript({ role: "them", text: "Tell me about a time you disagreed with your manager", start: ${now - 3000}, at: ${now - 300} });
+    submit();
+    await new Promise((r) => setTimeout(r, 300));
+    return { label: document.getElementById("answerQBtn").textContent, asked: answers.length };
+  `);
+  assert.deepEqual(before, { label: "Waiting…", asked }, "nothing is sent while they're still talking");
+  await run(`onTranscript({ role: "them", text: "and how it ended?", start: ${now + 500}, at: ${now + 1800} }); finishSpeaking();`);
+  await until(`answers.length === ${asked + 1} && answers.at(-1).status === "done"`);
+  assert.equal(await run(`return answers.at(-1).question;`), "Tell me about a time you disagreed with your manager and how it ended?");
+  await run(`stillHearing = async () => false;`);
+});
+
+test("auto-answer: a heard question is answered once they finish, not before", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`
+    let speaking = true;
+    window.finishSpeaking = () => (speaking = false);
+    stillHearing = async () => speaking;
+    state.listening = true;
+    onTranscript({ role: "them", text: "Can you tell me about a time?", start: ${now - 2500}, at: ${now - 400} });
+  `);
+  await sleep(1200);
+  assert.equal(await run(`return answers.length;`), count, "nothing starts while they're still talking");
+  await run(`onTranscript({ role: "them", text: "When you led a project under pressure?", start: ${now + 300}, at: ${now + 2000} }); finishSpeaking();`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  assert.deepEqual(await run(`const a = answers.at(-1); return [a.question, a.auto];`), ["Can you tell me about a time when you led a project under pressure?", true]);
+});
+
+test("auto-answer waits while you type, and stays off in Meeting mode", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`
+    stillHearing = async () => false;
+    state.listening = true;
+    document.getElementById("question").value = "my own question";
+    onTranscript({ role: "them", text: "Why do you want this job?", start: ${now + 3000}, at: ${now + 4500} });
+  `);
+  await sleep(1200);
+  assert.equal(await run(`return answers.length;`), count, "typing holds it off");
+  await run(`document.getElementById("question").value = ""; state.listening = true;`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  assert.equal(await run(`return answers.at(-1).question;`), "Why do you want this job?");
+
+  await click("#modeBtn");
+  await click('#modeMenu [data-value="meeting"]');
+  await until(`state.style !== "interview"`);
+  await run(`state.listening = true; onTranscript({ role: "them", text: "What's the plan for next quarter?", start: ${now + 9000}, at: ${now + 10500} });`);
+  await sleep(1200);
+  assert.equal(await run(`return answers.length;`), count + 1, "no auto-answer outside Interview mode");
+  await click("#modeBtn");
+  await click('#modeMenu [data-value="interview"]');
+  await until(`state.style === "interview"`);
+  await run(`pendingQuestion = null; stillHearing = async () => false; if (!document.getElementById("jdCard").hidden) document.getElementById("jdSame").click();`);
+});
+
+test("auto-answer: if they carry on after a long pause, the whole question is answered again and the first answer stays", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`
+    stillHearing = async () => false;
+    state.listening = true;
+    onTranscript({ role: "them", text: "Can you walk me through a project", start: ${now + 20000}, at: ${now + 21500} });
+  `);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  await run(`state.listening = true; onTranscript({ role: "them", text: "where you improved performance?", start: ${now + 22800}, at: ${now + 24300} });`);
+  await until(`answers.length === ${count + 2} && answers.at(-1).status === "done"`, 5000);
+  assert.deepEqual(await run(`return answers.slice(-2).map((a) => a.question);`), ["Can you walk me through a project", "Can you walk me through a project where you improved performance?"]);
 });

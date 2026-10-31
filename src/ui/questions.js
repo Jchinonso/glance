@@ -33,8 +33,8 @@ function nextPendingQuestion(pending, { role, text, at, start = at }, before = [
   if (role !== "them") return pending;
   const t = text.trim();
   if (pending && at < pending.at) return pending;
-  if (pending && start - pending.at < CONTINUE_MS && pending.text.length + t.length < MAX_PENDING) return { text: `${pending.text} ${t}`, at };
-  if (isQuestion(t)) return { text: leadIn(before, start, MAX_PENDING - t.length) + t, at };
+  if (pending && start - pending.at < CONTINUE_MS && pending.text.length + t.length < MAX_PENDING) return { text: joinPieces(pending.text, t), at };
+  if (isQuestion(t)) return { text: joinPieces(leadIn(before, start, MAX_PENDING - t.length), t), at };
   return t.split(/\s+/).length >= 6 ? null : pending;
 }
 
@@ -50,7 +50,24 @@ function leadIn(before, start, room) {
     room -= line.length + 1;
     next = l.start ?? l.at;
   }
-  return lead.length ? `${lead.join(" ")} ` : "";
+  return lead.reduceRight((rest, piece) => joinPieces(piece, rest), "");
+}
+
+// Transcription ends every piece with a full stop or question mark, so a
+// question split by pauses reads "about a time? When you had to…". When the
+// next piece carries on the sentence (starts with "and", "when", "for"…; not
+// "so", which usually opens a new one), the
+// break goes: "about a time when you had to…". A "how/what" clause gets a comma.
+const CARRY_ON = /^(?:and|or|but|when|where|while|which|that|who|whose|if|because|for|to|with|without|from|by|of|in|on|at|about|like|during|after|before|than|as)\b/i;
+const WH_CLAUSE = /^(?:how|what|why|which)\b/i;
+function joinPieces(first, next) {
+  if (!first) return next;
+  if (!next) return first;
+  if (/[.?!]$/.test(first) && (CARRY_ON.test(next) || WH_CLAUSE.test(next))) {
+    const glue = CARRY_ON.test(next) ? "" : ",";
+    return `${first.slice(0, -1)}${glue} ${next[0].toLowerCase()}${next.slice(1)}`;
+  }
+  return `${first} ${next}`;
 }
 
 // A heard question about something shown ("the code on screen") needs a

@@ -22,7 +22,7 @@ clicks. Real use is the best way to find what's left.
 
 Done when: a written list of what broke or felt slow, each turned into a fix.
 
-## 2. Faster answers (auto-answer) — on hold
+## 2. Faster answers (auto-answer) — done (Settings > Interview, on by default)
 
 Today: speech ends, about 2 s until the question shows, then you press
 Answer, then the model starts. Silence in an interview is noticeable.
