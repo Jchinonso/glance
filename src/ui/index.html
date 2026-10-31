@@ -284,6 +284,14 @@
               </button>
             </div>
 
+            <h2>Your data</h2>
+            <div class="group">
+              <button class="row link" id="wipeBtn">
+                <div class="row-text"><span>Delete all Glance data</span><small>API keys, settings, resume, details and logs. Do this before uninstalling.</small></div>
+                <span class="row-meta"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
+              </button>
+            </div>
+
             <div class="settings-foot">
               <button class="ghost danger" id="quitBtn">Quit Glance</button>
             </div>
@@ -321,6 +329,23 @@
           <div class="formrow">
             <button type="button" class="ghost" id="profileCancel">Cancel</button>
             <button type="submit" class="primary">Save</button>
+          </div>
+        </form>
+
+        <form class="instructions" id="wipeForm" hidden>
+          <button type="button" class="back" data-back hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Settings</button>
+          <p class="lead">Delete all Glance data</p>
+          <p class="hint">Removes everything Glance keeps on this Mac, then quits. Dragging Glance to the Trash doesn't remove these, so do this first.</p>
+          <ul class="ob-points">
+            <li>Your API keys, from the macOS keychain</li>
+            <li>Settings, resume, job description and your details</li>
+            <li>Logs</li>
+          </ul>
+          <label class="check"><input type="checkbox" id="wipeNotes" /> Also move my saved meeting notes (Documents/Glance) to the Trash</label>
+          <p class="hint">This can't be undone. To remove Glance's screen and audio permission, open System Settings › Privacy &amp; Security › Screen &amp; System Audio Recording.</p>
+          <div class="formrow">
+            <button type="button" class="ghost" id="wipeCancel">Cancel</button>
+            <button type="submit" class="primary alarm" id="wipeConfirm">Delete and quit</button>
           </div>
         </form>
 

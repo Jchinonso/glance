@@ -390,3 +390,23 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   assert.deepEqual(await run(`return [answers.length, answers.at(-1).question, waitingForQuestion];`), [count + 1, "What is a race condition?", false]);
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
 });
+
+// Last: it deletes the test app's data and quits it.
+test("Delete all Glance data: confirms, removes settings and logs, and quits", { skip }, async () => {
+  const { existsSync } = await import("node:fs");
+  assert.ok(existsSync(path.join(dir, "config.json")));
+  await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="general"]').click();`);
+  await click("#wipeBtn");
+  assert.ok(await shown("wipeForm"));
+  assert.ok(await run(`return document.querySelector(".dock").hidden;`));
+  await click("#wipeCancel");
+  assert.ok(await shown("menu"), "Cancel goes back to Settings and deletes nothing");
+  assert.ok(existsSync(path.join(dir, "config.json")));
+  await click("#wipeBtn");
+  const exited = new Promise((r) => app.once("exit", r));
+  await run(`document.getElementById("wipeForm").requestSubmit();`).catch(() => {}); // the app quits mid-call
+  await exited;
+  for (let i = 0; i < 80 && (existsSync(path.join(dir, "config.json")) || existsSync(path.join(dir, "logs"))); i++) await sleep(100);
+  assert.ok(!existsSync(path.join(dir, "config.json")), "settings removed");
+  assert.ok(!existsSync(path.join(dir, "logs")), "logs removed");
+});

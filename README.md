@@ -23,6 +23,7 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 - [How it works](#how-it-works)
 - [Development](#development)
 - [Troubleshooting](#troubleshooting)
+- [Uninstall](#uninstall)
 
 ## Features
 
@@ -136,7 +137,7 @@ The gear opens four tabs. Panels opened from Settings have a Back button that re
 - **Answers:** AI provider and key, model (Opus, Sonnet or Haiku on Anthropic), depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and whether typed questions include a screenshot.
 - **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
 - **Session:** spending so far, the transcript, Save notes, Clear session.
-- **General:** Accurate or Fast transcription, words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again.
+- **General:** Accurate or Fast transcription, words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
 
 ## AI providers
 
@@ -155,6 +156,7 @@ On Anthropic, Glance caches its instructions between questions (repeats cost a t
 - **Keys** are stored in the macOS login keychain, not in files.
 - **Settings** live in `~/Library/Application Support/glance/config.json`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
 - Glance treats the transcript, screen text, résumé and job description as data, not instructions.
+- **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
 
 ## Screen sharing: what hiding does and doesn't do
 
@@ -203,3 +205,27 @@ ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API
 - **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
 - **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
+
+## Uninstall
+
+Dragging an app to the Trash doesn't tell it anything, so on macOS an app's keys and settings stay behind unless you remove them. Glance keeps your API keys and résumé, so remove them first:
+
+1. Open Glance, then **Settings › General › Delete all Glance data**. It lists what it removes and asks you to confirm:
+   - your API keys, from the macOS keychain;
+   - settings, résumé, job description and your details (`~/Library/Application Support/Glance`);
+   - logs (`~/Library/Logs/Glance`);
+   - optionally, your saved meeting notes (`~/Documents/Glance`), moved to the Trash.
+
+   Glance then quits.
+2. Drag **Glance** from Applications to the Trash.
+3. Optional: remove Glance from **System Settings › Privacy & Security › Screen & System Audio Recording**.
+
+Already deleted the app? Remove the leftovers by hand:
+
+```sh
+security delete-generic-password -s com.glance.overlay.api-key -a glance   # Anthropic key
+security delete-generic-password -s com.glance.overlay.api-key -a openai   # OpenAI-compatible key, if set
+rm -rf ~/Library/Application\ Support/Glance ~/Library/Logs/Glance
+# Saved notes, if you don't want them: ~/Documents/Glance
+```
+

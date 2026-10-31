@@ -33,4 +33,5 @@ contextBridge.exposeInMainWorld("glance", {
   hide: () => ipcRenderer.invoke("hide"),
   resize: (height) => ipcRenderer.send("resize", height),
   quit: () => ipcRenderer.invoke("quit"),
+  deleteAllData: (options) => ipcRenderer.invoke("delete-all-data", options),
 });

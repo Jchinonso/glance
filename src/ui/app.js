@@ -8,7 +8,8 @@ let page = -1; // index into answers, -1 when none
 let view = "answers"; // "answers" | "transcript"
 // The one panel covering the answers, or null: "settings", "key" (changing the
 // provider; the key form also shows whenever there's no key), "instructions",
-// "doc" (resume or job description, see docKind), "profile" or "shortcuts".
+// "doc" (resume or job description, see docKind), "profile", "shortcuts" or
+// "wipe" (delete all Glance data).
 // A panel opened from Settings (and the transcript) goes back there when
 // closed, to the same tab.
 let panel = null;
@@ -242,7 +243,9 @@ function renderStage() {
   if (doc) updateDocCount();
   const prof = !needsKey && !onb && panel === "profile";
   $("profileForm").hidden = !prof;
-  const covered = needsKey || onb || instr || doc || prof || settings || shortcutsOpen;
+  const wipe = !needsKey && !onb && panel === "wipe";
+  $("wipeForm").hidden = !wipe;
+  const covered = needsKey || onb || instr || doc || prof || wipe || settings || shortcutsOpen;
   $("jdCard").hidden = !askingJob || covered;
   $("jdCloak").hidden = !!state.invisible;
   // No job description saved yet: there's no "same role" to keep.
@@ -287,7 +290,7 @@ function renderStage() {
     if (a.usage) $("answerUsage").textContent = `${a.usage.cost != null ? `About ${formatDollars(a.usage.cost)} with` : "With"} ${a.usage.model || "the model"} (${a.usage.input.toLocaleString()} tokens in, ${a.usage.output.toLocaleString()} out)`;
   }
 
-  document.querySelector(".dock").hidden = needsKey || onb || instr || doc || prof || settings || shortcutsOpen;
+  document.querySelector(".dock").hidden = needsKey || onb || instr || doc || prof || wipe || settings || shortcutsOpen;
 
   const showPager = view === "answers" && answers.length > 1 && !covered;
   $("pager").hidden = !showPager;
@@ -1168,6 +1171,19 @@ $("profileForm").addEventListener("submit", (e) => {
   closePanel();
 });
 $("profileCancel").addEventListener("click", closePanel);
+
+// Settings › General › Delete all Glance data (before uninstalling).
+$("wipeBtn").addEventListener("click", () => {
+  $("wipeNotes").checked = false;
+  openPanel("wipe");
+});
+$("wipeCancel").addEventListener("click", closePanel);
+$("wipeForm").addEventListener("submit", (e) => {
+  e.preventDefault();
+  $("wipeConfirm").disabled = true;
+  $("wipeConfirm").textContent = "Deleting…";
+  g.deleteAllData({ notes: $("wipeNotes").checked });
+});
 
 g.getState().then((s) => {
   const { transcript, ...rest } = s;

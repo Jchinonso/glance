@@ -1,5 +1,5 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
@@ -26,8 +26,10 @@ const configPath = path.join(app.getPath("userData"), "config.json");
 const logPath = path.join(app.getPath("logs"), "glance.log");
 
 const LOG_MAX_BYTES = 1_000_000;
+let wiping = false; // Delete all Glance data is under way
 
 function log(...parts) {
+  if (wiping) return; // deleting all data: don't write the log back
   try {
     mkdirSync(path.dirname(logPath), { recursive: true });
     // Keep one previous log; drop anything older.
@@ -175,6 +177,7 @@ function loadConfig() {
 
 // Written to a temp file and renamed, so a crash mid-write can't corrupt it.
 function saveConfig() {
+  if (wiping) return;
   const { apiKey, openaiKey, ...rest } = config;
   try {
     writeFileSync(`${configPath}.tmp`, JSON.stringify(rest, null, 2));
@@ -937,6 +940,25 @@ ipcMain.on("resize", (_e, height) => {
   if (win.getSize()[1] !== h) win.setSize(width, h);
 });
 ipcMain.handle("quit", () => app.quit());
+// Settings › General › Delete all Glance data. Dragging an app to the Trash
+// tells it nothing, so this is the uninstall step: the API keys leave the
+// keychain now, notes go to the Trash if asked, and the settings and logs
+// folders are removed just after Glance quits (Chromium writes there until
+// then). Only folders named Glance are ever removed.
+ipcMain.handle("delete-all-data", async (_e, options) => {
+  wiping = true;
+  current?.abort();
+  listener?.stop();
+  for (const account of Object.values(KEYCHAIN.accounts)) {
+    try {
+      writeKeychainKey(null, account);
+    } catch {}
+  }
+  if (options?.notes && existsSync(notesDir())) await shell.trashItem(notesDir()).catch(() => {});
+  const dirs = [app.getPath("userData"), path.dirname(logPath)].filter((d) => TEST_DIR ? d.startsWith(TEST_DIR) : /^glance$/i.test(path.basename(d)));
+  spawn("/bin/sh", ["-c", 'sleep 2; rm -rf "$@"', "sh", ...dirs], { detached: true, stdio: "ignore" }).unref();
+  app.quit();
+});
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", () => win?.show());
