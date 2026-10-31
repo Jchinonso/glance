@@ -171,7 +171,7 @@ function renderMenu() {
   $("profileMeta").textContent = filled ? `${filled} of 4` : "not added";
   $("jobMeta").textContent = docMeta(state.jobDescription);
   const providerLabel = (state.providers || []).find((p) => p.id === state.provider)?.label || "Anthropic";
-  $("keyMeta").textContent = state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : providerLabel;
+  $("keyMeta").textContent = state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
@@ -219,7 +219,11 @@ function renderStage() {
   $("keyStepLabel").hidden = onboarding?.step !== "key";
   $("keyStepBack").hidden = onboarding?.step !== "key";
   if (onboarding?.step === "key") $("keyStepLabel").textContent = stepLabel(onboardingSteps(onboarding), "key");
-  const needsKey = (!state.hasKey || panel === "key") && !onb;
+  // No key yet: the key form is the main view, but Settings and its forms
+  // still open over it (and close back to it).
+  const needsKey = (panel === "key" || (!state.hasKey && !panel)) && !onb;
+  // Listening and screenshots wait for a key, like answers.
+  document.body.classList.toggle("needs-key", !state.hasKey && !onb);
   $("keyForm").hidden = !needsKey;
   const changing = needsKey && state.hasKey;
   if (needsKey) renderKeyForm(changing);

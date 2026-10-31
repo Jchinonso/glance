@@ -391,6 +391,28 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
 });
 
+test("without an API key: the key form shows, the gear still opens Settings, Listen and Screenshot wait", { skip }, async () => {
+  await run(`await g.setSetting("provider", "anthropic");`); // no key for it in test mode
+  await until(`!state.hasKey`);
+  assert.ok(await shown("keyForm"));
+  assert.deepEqual(await run(`return ["listenBtn", "shotBtn"].map((id) => getComputedStyle(document.getElementById(id)).display);`), ["none", "none"]);
+  await click("#menuBtn");
+  assert.ok(await shown("menu"), "Settings opens without a key");
+  assert.ok(!(await shown("keyForm")));
+  assert.equal(await run(`return getComputedStyle(document.getElementById("listenBtn")).display;`), "none", "still hidden in Settings");
+  assert.match(await run(`return document.getElementById("keyMeta").textContent;`), /no key yet/);
+  await click('#settingsTabs [data-tab="interview"]');
+  await click("#profileBtn");
+  assert.ok(await shown("profileForm"), "Settings forms open too");
+  await click("#profileCancel");
+  await click("#menuBtn");
+  assert.ok(await shown("keyForm"), "closing Settings goes back to the key form");
+  await click('#keyProvider [data-value="openai"]'); // the local fake model needs no key
+  await until(`state.hasKey`);
+  assert.ok(!(await shown("keyForm")));
+  assert.equal(await run(`return getComputedStyle(document.getElementById("listenBtn")).display;`), "flex");
+});
+
 test("the no-sound warning offers settings and a reopen", { skip }, async () => {
   const labels = await run(`showNotice({ level: "warn", text: "Glance hasn't heard any sound", action: "audio-access" }); return [...document.querySelectorAll("#notice .notice-action")].map((b) => b.textContent);`);
   assert.deepEqual(labels, ["Open settings", "Reopen Glance"]);

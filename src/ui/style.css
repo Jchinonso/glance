@@ -626,6 +626,8 @@ button.small { padding: 4px 10px; font-size: 12px; }
 .ob-features dd { margin: 0; color: var(--dim); line-height: 1.5; }
 /* Setup: the app's own controls wait until it's done. */
 body.onboarding .bar .actions > :not(#hideTopBtn) { display: none; }
+/* No API key yet: only Settings, sharing, collapse and hide stay in the bar. */
+body.needs-key #listenBtn, body.needs-key #shotBtn { display: none; }
 .textlink { background: none; border: 0; padding: 6px 10px; color: var(--dim); font-size: 13px; }
 .textlink:hover { color: var(--text); }
 
