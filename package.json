@@ -1,12 +1,12 @@
 {
   "name": "glance",
-  "version": "1.0.0",
-  "description": "macOS overlay that answers questions about your screen and calls with Claude, and saves meeting notes",
+  "version": "1.1.0",
+  "description": "macOS overlay that answers questions about your screen and calls with Claude or any OpenAI-compatible model, and saves meeting notes",
   "main": "src/main.js",
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "open dist/Glance-darwin-arm64/Glance.app",
-    "package": "electron-packager . Glance --platform=darwin --arch=arm64 --app-bundle-id=com.glance.overlay --out=dist --overwrite --ignore='^/dist' --ignore='^/build' --ignore='^/test' --ignore='^/README.md' --asar.unpackDir='{models,node_modules/audiotee/bin}' --extend-info=build/extra.plist && codesign --force --deep --sign - dist/Glance-darwin-arm64/Glance.app && codesign --force --sign - --requirements '=designated => identifier \"com.glance.overlay\"' dist/Glance-darwin-arm64/Glance.app",
+    "package": "sh scripts/bundle-whisper.sh && electron-packager . Glance --platform=darwin --arch=arm64 --app-bundle-id=com.glance.overlay --out=dist --overwrite --ignore='^/dist' --ignore='^/build' --ignore='^/test' --ignore='^/README.md' --ignore='^/docs' --ignore='^/scripts' --ignore='^/PLAN.md' --asar.unpackDir='{models,vendor,node_modules/audiotee/bin}' --extend-info=build/extra.plist && codesign --force --deep --sign - dist/Glance-darwin-arm64/Glance.app && codesign --force --sign - --requirements '=designated => identifier \"com.glance.overlay\"' dist/Glance-darwin-arm64/Glance.app",
     "dev": "electron .",
     "dmg": "npm run package && sh scripts/make-dmg.sh"
   },

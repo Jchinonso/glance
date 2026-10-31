@@ -204,9 +204,10 @@ export class WhisperServer {
   }
 }
 
-// Apps launched from Finder don't inherit the shell PATH, so find Homebrew tools directly.
-function findBinary(name) {
-  for (const dir of ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]) {
+// The copy bundled with the app (bundleDir) comes first. Apps launched from
+// Finder don't inherit the shell PATH, so Homebrew tools are found directly.
+function findBinary(name, bundleDir) {
+  for (const dir of [bundleDir, "/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].filter(Boolean)) {
     const p = path.join(dir, name);
     if (existsSync(p)) return p;
   }
@@ -217,11 +218,12 @@ function findBinary(name) {
 // speech, and emits transcript lines, transcribed one segment at a time. The
 // mic is never recorded.
 export class Listener extends EventEmitter {
-  constructor({ modelPath, prompt, audioteePath, whisperBinary = findBinary("whisper-cli") }) {
+  // whisperDir: the whisper.cpp build bundled with the app, if any.
+  constructor({ modelPath, prompt, audioteePath, whisperDir, whisperBinary = findBinary("whisper-cli", whisperDir) }) {
     super();
     this.audioteePath = audioteePath;
     this.opts = { modelPath, prompt, binary: whisperBinary };
-    this.server = new WhisperServer(findBinary("whisper-server"));
+    this.server = new WhisperServer(findBinary("whisper-server", whisperDir));
     this.pending = [];
     this.working = false;
     this.running = false;

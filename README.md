@@ -53,24 +53,23 @@ The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated
 
 ## Download
 
-1. Download **Glance-1.0.0-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
+1. Download the latest **Glance-…-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
 2. Open it and drag **Glance** onto **Applications**.
-3. Install the speech engine Glance uses to transcribe calls: `brew install whisper-cpp` (needs [Homebrew](https://brew.sh)).
-4. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
-5. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
+3. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
+4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
 
-The speech models are inside the app, which is why the download is about 700 MB.
+Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration through Metal) and its models are inside the app, which is why the download is about 700 MB. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
 
 ## Requirements
 
 - A Mac with Apple Silicon (the build targets `darwin-arm64`).
-- [Homebrew](https://brew.sh) and Node.js 20 or later.
+- To build from source: [Homebrew](https://brew.sh) and Node.js 20 or later. The downloaded app needs neither.
 - An API key for Anthropic or an OpenAI-compatible service, or a local model server (Ollama, LM Studio) that needs no key.
 
 ## Build from source
 
 ```sh
-# 1. The transcription tool
+# 1. The transcription engine; the build copies it into the app (vendor/whisper)
 brew install whisper-cpp
 
 # 2. The speech models (not in git)
@@ -78,7 +77,7 @@ mkdir -p models
 curl -L -o models/ggml-base.en.bin  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 curl -L -o models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
 
-# 3. Dependencies, then build the app
+# 3. Dependencies, then build the app (bundles whisper.cpp, then packages and signs)
 npm install
 npm run package
 
@@ -176,7 +175,8 @@ Mac audio ──► speech detection ──► Whisper (whisper-server, kept loa
 ```
 
 - `src/main.js`: window, shortcuts, screenshots, keychain, settings, notes, logging, the test mode.
-- `src/audio.js`: system audio capture (audiotee), speech detection, Whisper transcription. `whisper-server` keeps the model loaded and restarts if it dies.
+- `src/audio.js`: system audio capture (audiotee), speech detection, Whisper transcription. `whisper-server` keeps the model loaded and restarts if it dies. The app runs its own bundled copy of whisper.cpp, falling back to Homebrew's (for `npm run dev`).
+- `scripts/bundle-whisper.sh`: copies `whisper-server`, `whisper-cli`, their libraries and ggml's compute backends (Metal, CPU, BLAS) from Homebrew into `vendor/whisper`, rewrites their library paths to stay inside the app, and signs them. Licenses are included in `vendor/whisper/licenses`.
 - `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
 - `src/providers.js`: Anthropic and OpenAI-compatible adapters behind one interface. Adding a provider means adding one adapter.
 - `src/compress.js`: mechanical compression of the transcript and earlier answers sent with every question; numbers, code, quotes and negations are never touched.
@@ -199,7 +199,7 @@ ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API
 ## Troubleshooting
 
 - **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
-- **Listening shows nothing.** Check the same permission, and that `brew install whisper-cpp` ran and the models are in `models/`.
+- **Listening shows nothing.** Check the same permission. Building from source: make sure `brew install whisper-cpp` ran before `npm run package` and the models are in `models/`.
 - **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
 - **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.

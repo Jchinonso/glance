@@ -679,6 +679,8 @@ function createListener() {
   const l = new Listener({
     ...transcriptionOptions(),
     audioteePath: unpacked(path.join(here, "..", "node_modules", "audiotee", "bin", "audiotee")),
+    // Bundled by scripts/bundle-whisper.sh; Homebrew's is used when absent (npm run dev).
+    whisperDir: unpacked(path.join(here, "..", "vendor", "whisper")),
   });
   const keep = (line) => {
     // Kept whole for notes, in spoken order; only the tail goes to the model.
