@@ -219,8 +219,10 @@ function findBinary(name, bundleDir) {
 // mic is never recorded.
 export class Listener extends EventEmitter {
   // whisperDir: the whisper.cpp build bundled with the app, if any.
-  constructor({ modelPath, prompt, audioteePath, whisperDir, whisperBinary = findBinary("whisper-cli", whisperDir) }) {
+  // silentAfterMs: see "silent" below.
+  constructor({ modelPath, prompt, audioteePath, whisperDir, whisperBinary = findBinary("whisper-cli", whisperDir), silentAfterMs = 15000 }) {
     super();
+    this.silentAfterMs = silentAfterMs;
     this.audioteePath = audioteePath;
     this.opts = { modelPath, prompt, binary: whisperBinary };
     this.server = new WhisperServer(findBinary("whisper-server", whisperDir));
@@ -256,7 +258,18 @@ export class Listener extends EventEmitter {
       this.stop();
       this.emit("ended");
     };
-    tee.on("data", ({ data }) => this.them.push(data));
+    // macOS gives exact digital silence, with no error, while system audio
+    // access is off or the app hasn't been reopened since it was granted.
+    // "silent" fires once if nothing but zeros arrives for silentAfterMs.
+    this.heardSound = false;
+    clearTimeout(this.silentTimer);
+    this.silentTimer = setTimeout(() => {
+      if (this.running && this.tee === tee && !this.heardSound) this.emit("silent");
+    }, this.silentAfterMs);
+    tee.on("data", ({ data }) => {
+      if (!this.heardSound && data.some((b) => b !== 0)) this.heardSound = true;
+      this.them.push(data);
+    });
     tee.on("error", (e) => failed(`System audio failed: ${e.message}.`));
     tee.on("stop", () => failed("System audio capture stopped."));
     tee.start().catch((e) => failed(`System audio failed: ${e.message}.`));
@@ -278,6 +291,7 @@ export class Listener extends EventEmitter {
   stop() {
     if (!this.running) return;
     this.running = false;
+    clearTimeout(this.silentTimer);
     this.tee?.stop().catch(() => {});
     this.them?.flush();
     if (!this.working) this.server.stop();

@@ -698,6 +698,15 @@ function createListener() {
     keep(line);
   });
   l.on("error", (text) => send("notice", { level: "error", text }));
+  // Nothing but silence since Listen: most often system audio access is off,
+  // or Glance wasn't reopened after it was turned on.
+  l.on("silent", () =>
+    send("notice", {
+      level: "warn",
+      text: "Glance hasn't heard any sound from your Mac yet. If something is playing, macOS is holding it back: allow Glance in Screen & System Audio Recording (also under System Audio Recording Only), then reopen Glance. macOS only sends audio after a reopen.",
+      action: "audio-access",
+    }),
+  );
   // Capture stopped on its own (system audio lost, permission revoked).
   l.on("ended", () => {
     if (!listening) return;
@@ -940,6 +949,11 @@ ipcMain.on("resize", (_e, height) => {
   if (win.getSize()[1] !== h) win.setSize(width, h);
 });
 ipcMain.handle("quit", () => app.quit());
+// macOS starts sending system audio only after the app reopens.
+ipcMain.handle("relaunch", () => {
+  app.relaunch();
+  app.quit();
+});
 // Settings › General › Delete all Glance data. Dragging an app to the Trash
 // tells it nothing, so this is the uninstall step: the API keys leave the
 // keychain now, notes go to the Trash if asked, and the settings and logs

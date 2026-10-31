@@ -73,3 +73,40 @@ test("steady background noise is not mistaken for speech", () => {
   seg.push(noise(1.2, 1500));
   assert.equal(count, fromNoise + 1);
 });
+
+// A stand-in for audiotee that streams the given bytes, then waits.
+async function fakeTee(source) {
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(new URL("file://" + tmpdir() + "/glance-tee-").pathname);
+  const bin = `${dir}/audiotee`;
+  writeFileSync(bin, `#!/bin/sh\nhead -c 64000 ${source}\nsleep 8\n`);
+  chmodSync(bin, 0o755);
+  return bin;
+}
+
+test("listener warns once when nothing but silence arrives (system audio blocked)", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const here = new URL("../package.json", import.meta.url).pathname;
+  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/zero"), silentAfterMs: 1500 });
+  let silent = 0;
+  l.on("silent", () => silent++);
+  l.on("error", () => {});
+  assert.equal(l.start(), true);
+  await new Promise((r) => setTimeout(r, 2500));
+  l.stop();
+  assert.equal(silent, 1);
+});
+
+test("listener doesn't warn once real sound has arrived", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const here = new URL("../package.json", import.meta.url).pathname;
+  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/urandom"), silentAfterMs: 1500 });
+  let silent = 0;
+  l.on("silent", () => silent++);
+  l.on("error", () => {});
+  assert.equal(l.start(), true);
+  await new Promise((r) => setTimeout(r, 2500));
+  l.stop();
+  assert.equal(silent, 0);
+});

@@ -1,6 +1,6 @@
 {
   "name": "glance",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "macOS overlay that answers questions about your screen and calls with Claude or any OpenAI-compatible model, and saves meeting notes",
   "main": "src/main.js",
   "scripts": {

@@ -391,6 +391,12 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
 });
 
+test("the no-sound warning offers settings and a reopen", { skip }, async () => {
+  const labels = await run(`showNotice({ level: "warn", text: "Glance hasn't heard any sound", action: "audio-access" }); return [...document.querySelectorAll("#notice .notice-action")].map((b) => b.textContent);`);
+  assert.deepEqual(labels, ["Open settings", "Reopen Glance"]);
+  await run(`document.getElementById("notice").hidden = true;`);
+});
+
 // Last: it deletes the test app's data and quits it.
 test("Delete all Glance data: confirms, removes settings and logs, and quits", { skip }, async () => {
   const { existsSync } = await import("node:fs");

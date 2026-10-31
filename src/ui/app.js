@@ -370,11 +370,13 @@ function showNotice({ level, text, action }) {
     b.addEventListener("click", () => g.openNotes(action.path));
     n.append(" ", b);
   }
-  if (action === "screen-settings") {
+  // "audio-access": no sound since Listen; settings, then a reopen.
+  const buttons = { "screen-settings": ["Open Screen Recording settings"], "audio-access": ["Open settings", "Reopen Glance"] }[action] || [];
+  for (const label of buttons) {
     const b = document.createElement("button");
     b.className = "notice-action";
-    b.textContent = "Open Screen Recording settings";
-    b.addEventListener("click", () => g.openScreenSettings());
+    b.textContent = label;
+    b.addEventListener("click", () => (label === "Reopen Glance" ? g.relaunch() : g.openScreenSettings()));
     n.append(" ", b);
   }
   clearTimeout(showNotice.t);
