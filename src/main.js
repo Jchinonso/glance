@@ -522,7 +522,7 @@ async function runAsk(question, { heard = false } = {}) {
     const aborted = isAbort(e);
     if (!aborted) log("answer failed:", e);
     // A stopped answer still shows, so keep it for follow-ups and notes.
-    if (aborted && text) answers.push({ id, question: q, context, answer: text });
+    if (aborted && text) answers.push({ id, question: q, context, answer: text, stopped: true });
     send("answer-end", { id, error: aborted ? null : describeError(llm, e, model), aborted });
   } finally {
     if (current?.id === id) current = null;
@@ -630,7 +630,7 @@ async function saveNotes() {
       parts.push("## Transcript", transcript.map((l) => `**${l.role === "me" ? "You" : "Them"}:** ${l.text}`).join("\n\n"));
     }
     if (answers.length) {
-      parts.push("## Questions and answers", answers.map((a) => `### ${a.question || a.context || "Help with what's on screen"}\n\n${splitKeys(a.answer).text}${a.said ? `\n\n_You said instead:_ ${a.said}` : ""}`).join("\n\n"));
+      parts.push("## Questions and answers", answers.map((a) => `### ${a.question || a.context || "Help with what's on screen"}\n\n${splitKeys(a.answer).text}${a.stopped ? "\n\n_(Stopped before the end.)_" : ""}${a.said ? `\n\n_You said instead:_ ${a.said}` : ""}`).join("\n\n"));
     }
     mkdirSync(notesDir(), { recursive: true });
     let file = path.join(notesDir(), notesFileName(now));

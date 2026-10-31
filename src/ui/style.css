@@ -677,3 +677,6 @@ body.onboarding .bar .actions > :not(#hideTopBtn) { display: none; }
 /* The closing note (details Glance added, a tip): for the user's eyes, so it
    reads as an aside, not part of what to say. */
 .body > p:last-child > em:only-child { display: block; font: 400 12.5px/1.45 var(--ui); font-style: normal; color: var(--dim); }
+
+/* An answer cut short (Stop, a new question, or a typed one). */
+.body .stopped { margin-top: 6px; font: 600 12px var(--ui); color: var(--caution); }

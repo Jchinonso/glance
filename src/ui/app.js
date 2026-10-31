@@ -270,7 +270,8 @@ function renderStage() {
     const noteMd = /^\*[^*].*\*$/.test(note?.trim() || "") && note !== first ? renderMarkdown(note) : "";
     $("answerBody").innerHTML =
       (compact ? `${renderMarkdown(first)}<ul class="keys">${keys.map((k) => `<li>${escapeHtml(k)}</li>`).join("")}</ul>${noteMd}` : renderMarkdown(body)) +
-      (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "");
+      (a.error ? `<p class="err">${escapeHtml(a.error)}</p>` : "") +
+      (a.stopped ? `<p class="stopped">Stopped before the end.</p>` : "");
     $("viewToggle").hidden = !keys.length;
     $("viewToggle").textContent = compact ? "Full answer" : "Key points";
     $("viewToggle").title = compact ? "Show the whole answer to say" : "Show only the key points";
@@ -304,11 +305,18 @@ function renderStage() {
   $("modeMeetingHint").textContent = `${meetingStyle() === "natural" ? "Natural" : "Brief"} answers about the call and your screen`;
   for (const b of $("modeMenu").querySelectorAll("button")) b.setAttribute("aria-checked", String((b.dataset.value === "interview") === interview));
 
-  const busy = !!state.busy;
-  $("askBtn").classList.toggle("stop", busy);
-  $("askBtn").textContent = busy ? "Stop" : "Ask";
-  $("askBtn").title = busy ? "Stop this answer" : `Ask (${plainKeys(state.shortcuts?.ask || "")})`;
+  renderAskBtn();
 }
+
+// Stop while an answer streams, unless something is typed: then it asks
+// that instead (see submit).
+function renderAskBtn() {
+  const stop = !!state.busy && !$("question").value.trim();
+  $("askBtn").classList.toggle("stop", stop);
+  $("askBtn").textContent = stop ? "Stop" : "Ask";
+  $("askBtn").title = stop ? "Stop this answer" : `Ask (${plainKeys(state.shortcuts?.ask || "")})`;
+}
+$("question").addEventListener("input", renderAskBtn);
 
 function renderShots() {
   const shots = state.shots || [];
@@ -402,22 +410,37 @@ function hasSeenAnswer() {
 // matters if they keep talking.
 const FINISH_WAIT_MS = 8000;
 let waitingForQuestion = false;
+let waitTakenOver = false; // a typed question replaced the one being waited for
 let stillHearing = () => g.stillHearing(); // replaced in the UI tests
 
-async function submit() {
+// form: from the question box (Return, or the Ask/Stop button). Otherwise
+// ⌘↵ or the Answer button.
+async function submit({ form = false } = {}) {
   if (onboarding) return; // shortcuts wait until setup is done
-  if (state.busy) return g.cancel();
-  if (waitingForQuestion) return;
+  const typed = $("question").value.trim();
+  // Waiting for a heard question to finish: only a typed question takes over.
+  if (waitingForQuestion) {
+    if (!typed) return;
+    waitTakenOver = true;
+  }
+  if (state.busy && !typed) {
+    // ⌘↵ while auto-answer is already answering is asking for that same
+    // answer, so it keeps going; the Stop button still stops it.
+    const last = answers.at(-1);
+    if (!form && last?.auto && last.status === "streaming") return;
+    return g.cancel();
+  }
+  // Typed while an answer streams: send it now (the current answer stops and stays).
   autoAnswerPending = false;
   lastAutoQuestion = null;
-  const typed = $("question").value.trim();
   $("question").value = "";
   if (!typed && state.listening && pendingQuestion && (await stillHearing())) {
     waitingForQuestion = true;
     renderStrip();
     const end = Date.now() + FINISH_WAIT_MS;
-    while (Date.now() < end && (await stillHearing())) await new Promise((r) => setTimeout(r, 150));
+    while (Date.now() < end && !waitTakenOver && (await stillHearing())) await new Promise((r) => setTimeout(r, 150));
     waitingForQuestion = false;
+    if (waitTakenOver) return void (waitTakenOver = false);
   }
   // Nothing typed but a question was just heard: answer exactly that one. It
   // came from the call, so the screen isn't attached unless it refers to it.
@@ -535,13 +558,14 @@ g.on("answer-end", ({ id, error, aborted, usage }) => {
     a.status = error ? "error" : "done";
     a.error = error;
     a.usage = usage;
+    a.stopped = !!aborted; // cut short: Stop, a new question, or a typed one
   }
   renderStage();
 });
 
 $("askForm").addEventListener("submit", (e) => {
   e.preventDefault();
-  submit();
+  submit({ form: true });
 });
 const hostOf = (url) => {
   try {

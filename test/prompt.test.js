@@ -70,3 +70,11 @@ test("earlier answers drop their Keys line; what the user said replaces the sugg
   assert.match(sent, /A \(user said this instead of the suggestion\): .*team knowing Postgres/);
   assert.ok(!sent.includes("It gave us real transactions"));
 });
+
+test("an answer cut short is marked as such for follow-ups", async () => {
+  let sent = "";
+  const provider = { name: () => "x", stream: ({ parts }) => ((sent = parts.at(-1).text), { done: Promise.resolve({ text: "", usage: {}, stop: "end" }), abort() {} }) };
+  const previous = [{ question: "Walk me through the migration.", answer: "**We moved billing to Postgres.**\n\nFirst we", stopped: true }];
+  await ask({ provider, model: "m", question: "", transcript: [], previous, screenshots: [], effort: "low", style: "interview", onText() {} }).done;
+  assert.match(sent, /First we \[stopped before the end\]/);
+});

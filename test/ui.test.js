@@ -65,10 +65,11 @@ before(async () => {
       const request = JSON.parse(body || "{}");
       requests.push(request);
       res.writeHead(200, { "content-type": "text/event-stream" });
-      // "slowly" in the question: one piece, then hang until stopped.
-      if (/slowly/.test(JSON.stringify(request.messages?.[1] ?? ""))) {
+      // "slowly" in the question being asked (not earlier answers): one piece,
+      // then hang until stopped.
+      if (/Question: [^\n]*slowly/.test(request.messages?.[1]?.content?.at(-1)?.text ?? "")) {
         res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: "**Partly answered.**" } }] })}\n\n`);
-        return req.on("close", () => res.end());
+        return res.on("close", () => res.end()); // until the app hangs up
       }
       for (const piece of ANSWER.match(/[\s\S]{1,24}/g)) {
         res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`);
@@ -244,6 +245,7 @@ test("a stopped answer still counts: what you said about it reaches the next que
   await until(`answers.at(-1).text.includes("Partly answered")`);
   await click("#askBtn"); // now Stop
   await until(`answers.at(-1).status === "done" && !state.busy`);
+  assert.match(await run(`return document.getElementById("answerBody").textContent;`), /Stopped before the end/, "a stopped answer says so");
   await click("#saidOpen");
   await run(`document.getElementById("saidInput").value = "I described the Postgres cutover"; document.getElementById("saidForm").requestSubmit();`);
   await run(`document.getElementById("question").value = "Go on"; document.getElementById("askBtn").click();`);
@@ -346,4 +348,45 @@ test("auto-answer: if they carry on after a long pause, the whole question is an
   await run(`state.listening = true; onTranscript({ role: "them", text: "where you improved performance?", start: ${now + 22800}, at: ${now + 24300} });`);
   await until(`answers.length === ${count + 2} && answers.at(-1).status === "done"`, 5000);
   assert.deepEqual(await run(`return answers.slice(-2).map((a) => a.question);`), ["Can you walk me through a project", "Can you walk me through a project where you improved performance?"]);
+});
+
+test("⌘↵ doesn't stop an auto-answer already under way; Stop does; typing sends right away", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`stillHearing = async () => false; state.listening = true; onTranscript({ role: "them", text: "Could you answer this one slowly?", start: ${now + 40000}, at: ${now + 41500} });`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).auto && answers.at(-1).text.length > 0`, 5000);
+  await run(`submit();`); // ⌘↵ / Answer
+  await sleep(400);
+  assert.equal(await run(`return answers.at(-1).status;`), "streaming", "⌘↵ kept the auto-answer going");
+  // Typing a question while it streams: the button turns back into Ask and sends it at once.
+  assert.equal(await run(`return document.getElementById("askBtn").textContent;`), "Stop");
+  await run(`const q = document.getElementById("question"); q.value = "Typed while it streams"; q.dispatchEvent(new Event("input"));`);
+  assert.equal(await run(`return document.getElementById("askBtn").textContent;`), "Ask");
+  await run(`document.getElementById("askForm").requestSubmit();`);
+  await until(`answers.length === ${count + 2} && answers.at(-1).question === "Typed while it streams" && answers.at(-1).status === "done"`);
+  assert.equal(await run(`return answers.at(-2).status;`), "done", "the interrupted answer stays, stopped");
+  // The Stop button stops an auto-answer.
+  await run(`state.listening = true; onTranscript({ role: "them", text: "And another one slowly?", start: ${now + 50000}, at: ${now + 51500} });`);
+  await until(`answers.length === ${count + 3} && answers.at(-1).auto && answers.at(-1).text.length > 0`, 5000);
+  await click("#askBtn"); // shows Stop while busy
+  await until(`answers.at(-1).status !== "streaming" && !state.busy`);
+});
+
+test("typing a question while Glance waits for a heard one sends the typed one instead", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`
+    let speaking = true;
+    stillHearing = async () => speaking;
+    window.finishSpeaking = () => (speaking = false);
+    state.listening = true;
+    onTranscript({ role: "them", text: "Tell me about your last project", start: ${now + 60000}, at: ${now + 61500} });
+    submit(); // Answer: waits while they talk
+  `);
+  await until(`waitingForQuestion`);
+  await run(`document.getElementById("question").value = "What is a race condition?"; document.getElementById("askForm").requestSubmit();`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`);
+  await sleep(400);
+  assert.deepEqual(await run(`return [answers.length, answers.at(-1).question, waitingForQuestion];`), [count + 1, "What is a race condition?", false]);
+  await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
 });

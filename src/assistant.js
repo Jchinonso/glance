@@ -194,7 +194,7 @@ const INTERVIEW_ANSWER_CHARS = 1500;
 export function ask({ provider, model, question, transcript, previous, screenshots, effort, style, customInstructions, resume, jobDescription, profile, onText }) {
   const parts = screenshots.map((data) => ({ type: "image", data }));
   const prior = previous.length
-    ? `<previous_answers>\n${previous.map((p, i) => `Q: ${p.question || (p.context ? `(not typed; last heard: ${p.context})` : "(auto)")}\n${p.said ? `A (user said this instead of the suggestion): ${caveman(p.said)}` : `A: ${compressAnswer(splitKeys(p.answer).text, i === previous.length - 1 ? LAST_ANSWER_CHARS : style === "interview" ? INTERVIEW_ANSWER_CHARS : undefined)}`}`).join("\n\n")}\n</previous_answers>\n\n`
+    ? `<previous_answers>\n${previous.map((p, i) => `Q: ${p.question || (p.context ? `(not typed; last heard: ${p.context})` : "(auto)")}\n${p.said ? `A (user said this instead of the suggestion): ${caveman(p.said)}` : `A: ${compressAnswer(splitKeys(p.answer).text, i === previous.length - 1 ? LAST_ANSWER_CHARS : style === "interview" ? INTERVIEW_ANSWER_CHARS : undefined)}${p.stopped ? " [stopped before the end]" : ""}`}`).join("\n\n")}\n</previous_answers>\n\n`
     : "";
   parts.push({
     type: "text",
