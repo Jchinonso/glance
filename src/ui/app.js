@@ -278,7 +278,7 @@ function renderStage() {
   if (a && !$("answer").hidden) {
     $("answer").classList.toggle("streaming", a.status === "streaming");
     $("answerQ").textContent = a.question || "Help with what's on screen";
-    const { text: body, keys } = splitKeys(a.text);
+    const { text: body, keys } = splitKeys(a.text, { streaming: a.status === "streaming" });
     const compact = keys.length > 0 && answerView === "compact";
     const first = body.split("\n").find((l) => l.trim()) || "";
     // The note (details Glance added, to check) shows in both views.

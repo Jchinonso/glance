@@ -201,7 +201,7 @@ ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API
 ## Troubleshooting
 
 - **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
-- **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package` and the models are in `models/`.
+- **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package` and the models are in `models/`.
 - **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
 - **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.

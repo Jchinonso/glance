@@ -5,7 +5,7 @@ import vm from "node:vm";
 
 const ctx = vm.createContext({});
 for (const f of ["highlight.js", "markdown.js"]) vm.runInContext(readFileSync(new URL(`../src/ui/${f}`, import.meta.url), "utf8"), ctx);
-vm.runInContext("this.md = renderMarkdown", ctx);
+vm.runInContext("this.md = renderMarkdown; this.splitKeys = splitKeys", ctx);
 const md = ctx.md;
 
 test("heading directly followed by a list", () => {
@@ -42,4 +42,13 @@ test("underscore italics render, snake_case stays", () => {
 
 test("placeholder brackets stay as text", () => {
   assert.ok(md("I led [your example: a team project] last year").includes("[your example: a team project]"));
+});
+
+test("a Keys line still being streamed is hidden, not shown as text", () => {
+  const split = (t, o) => JSON.parse(JSON.stringify(ctx.splitKeys(t, o)));
+  assert.deepEqual(split("**I led it.**\n\nKeys: billing mig", { streaming: true }), { text: "**I led it.**\n", keys: [] });
+  assert.deepEqual(split("**I led it.**\n\nKe", { streaming: true }), { text: "**I led it.**\n", keys: [] });
+  assert.equal(split("**I led it.**\n\nKeys: billing mig").text, "**I led it.**\n\nKeys: billing mig", "finished answers keep it");
+  assert.equal(split("**I led it.**\n\nKeys: a · b\n\nSo", { streaming: true }).text, "**I led it.**\n\nSo");
+  assert.equal(split("**Kevin was great.**", { streaming: true }).text, "**Kevin was great.**", "a first line is never hidden");
 });
