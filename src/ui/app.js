@@ -478,7 +478,8 @@ let autoAnswerId = null; // the answer auto-answer started, while it streams
 // The question auto-answer last answered ({ text, at }): if they pause longer
 // than expected and then carry on, the whole question is answered again.
 let lastAutoQuestion = null;
-const autoAnswerOn = () => !!state.autoAnswer && state.style === "interview" && !!state.listening && !onboarding;
+// No key: the listen shortcut still works, but asking would only show an error.
+const autoAnswerOn = () => !!state.autoAnswer && state.style === "interview" && !!state.listening && !!state.hasKey && !onboarding;
 function watchForQuestion() {
   if (autoTimer || !autoAnswerOn() || !pendingQuestion) return;
   let quietSince = null;
@@ -633,6 +634,7 @@ $("cancelKeyBtn").addEventListener("click", closePanel);
 // With no key left, the key form stays up until a new one is saved.
 $("removeKeyBtn").addEventListener("click", () => {
   panel = null;
+  backToSettings = false;
   $("keyInput").value = "";
   g.setApiKey("");
 });

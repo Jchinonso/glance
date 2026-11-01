@@ -229,6 +229,8 @@ export class Listener extends EventEmitter {
     this.pending = [];
     this.working = false;
     this.running = false;
+    this.heardSound = false; // any sound since Glance opened
+    this.warnedSilent = false;
   }
 
   // Returns false (with one clear error) when a required tool is missing.
@@ -260,12 +262,18 @@ export class Listener extends EventEmitter {
     };
     // macOS gives exact digital silence, with no error, while system audio
     // access is off or the app hasn't been reopened since it was granted.
-    // "silent" fires once if nothing but zeros arrives for silentAfterMs.
-    this.heardSound = false;
+    // "silent" fires if nothing but zeros arrives for silentAfterMs. Nothing
+    // playing yet (Listen pressed before the call starts) looks the same, so
+    // it fires at most once per run, and never once any sound has come
+    // through: access is evidently working.
     clearTimeout(this.silentTimer);
-    this.silentTimer = setTimeout(() => {
-      if (this.running && this.tee === tee && !this.heardSound) this.emit("silent");
-    }, this.silentAfterMs);
+    if (!this.heardSound && !this.warnedSilent) {
+      this.silentTimer = setTimeout(() => {
+        if (!this.running || this.tee !== tee || this.heardSound) return;
+        this.warnedSilent = true;
+        this.emit("silent");
+      }, this.silentAfterMs);
+    }
     tee.on("data", ({ data }) => {
       if (!this.heardSound && data.some((b) => b !== 0)) this.heardSound = true;
       this.them.push(data);

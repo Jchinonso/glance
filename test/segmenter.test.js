@@ -98,6 +98,21 @@ test("listener warns once when nothing but silence arrives (system audio blocked
   assert.equal(silent, 1);
 });
 
+test("listener warns about silence only once per run, not on every Listen", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const here = new URL("../package.json", import.meta.url).pathname;
+  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/zero"), silentAfterMs: 800 });
+  let silent = 0;
+  l.on("silent", () => silent++);
+  l.on("error", () => {});
+  for (let i = 0; i < 2; i++) {
+    assert.equal(l.start(), true);
+    await new Promise((r) => setTimeout(r, 1300));
+    l.stop();
+  }
+  assert.equal(silent, 1);
+});
+
 test("listener doesn't warn once real sound has arrived", async () => {
   const { Listener } = await import("../src/audio.js");
   const here = new URL("../package.json", import.meta.url).pathname;
