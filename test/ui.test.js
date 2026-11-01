@@ -397,6 +397,19 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
 });
 
+test("stopping Listen drops an unanswered question, so it isn't shown or auto-answered later", { skip }, async () => {
+  const now = Date.now() + 70000;
+  await run(`
+    state.listening = true;
+    wasListening = true; // as if the app had reported Listen on
+    onTranscript({ role: "them", text: "What's your biggest weakness?", start: ${now}, at: ${now + 1500} });
+  `);
+  assert.equal(await run("return pendingQuestion?.text"), "What's your biggest weakness?");
+  // Any real state update now says listening is off: Listen was stopped.
+  await run(`g.setSetting("autoScreen", false);`);
+  await until(`!state.listening && pendingQuestion === null`);
+});
+
 test("Interview mode without a resume asks for one first; auto-answer says it needs Interview mode", { skip }, async () => {
   await run(`await g.setSetting("resume", ""); await g.setSetting("jdCheckedAt", 0); await g.setSetting("style", "brief");`);
   await until(`state.style === "brief" && !state.resume`);

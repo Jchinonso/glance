@@ -504,6 +504,7 @@ function stopWatching() {
 }
 let autoAnswerPending = false; // the next answer-start is auto-answer's
 
+let wasListening = false; // as last reported by the app (the UI tests fake state.listening)
 g.on("state", (s) => {
   const before = state;
   state = s;
@@ -512,6 +513,14 @@ g.on("state", (s) => {
   // Start of an interview: Listen pressed, or Interview mode switched on.
   if ((state.listening && !before.listening) || (state.style === "interview" && before.style && before.style !== "interview")) maybeAskJob();
   if (state.style !== "interview") askingJob = false;
+  // Listening stopped: a question left unanswered belongs to that stretch of
+  // the call, so it's neither shown nor auto-answered when Listen starts again.
+  if (wasListening && !s.listening) {
+    pendingQuestion = null;
+    lastAutoQuestion = null;
+    stopWatching();
+  }
+  wasListening = !!s.listening;
   render();
 });
 g.on("notice", showNotice);
