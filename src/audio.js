@@ -296,9 +296,10 @@ export class Listener extends EventEmitter {
   }
 
   // True while the other side is mid-phrase or their last words are still
-  // being transcribed: a question heard now may not be complete yet.
+  // being transcribed (also just after Stop): a question heard now may not be
+  // complete yet.
   hearing() {
-    return this.running && (!!this.them?.speaking || this.working || this.pending.length > 0);
+    return (this.running && !!this.them?.speaking) || this.working || this.pending.length > 0;
   }
 
   stop() {

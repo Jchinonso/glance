@@ -58,6 +58,8 @@ const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openai
   compactAnswers: false,
   // Interview mode, while listening: answer a heard question once they finish.
   autoAnswer: true,
+  // Set once Opus, the old default, has been moved to the new one (Sonnet).
+  modelDefaultMoved: false,
   apiKey: null, openaiKey: null };
 const PROFILE_FIELDS = ["profileName", "salary", "visa", "notice"];
 const profile = () => ({ name: config.profileName, salary: config.salary, visa: config.visa, notice: config.notice });
@@ -159,6 +161,14 @@ function loadConfig() {
   }
   config = { ...defaults, ...settings, apiKey: readKeychainKey(), openaiKey: readKeychainKey(KEYCHAIN.accounts.openai) };
   if (!(config.provider in PROVIDERS)) config.provider = "anthropic";
+  // Opus was the default before 1.2.4, and every setting is saved, so most
+  // installs have it without choosing it. Move them to the faster default
+  // once; picking Opus again afterwards sticks.
+  if (!config.modelDefaultMoved) {
+    if (config.model === "claude-opus-5-5") config.model = DEFAULT_ANTHROPIC_MODEL;
+    config.modelDefaultMoved = true;
+    if (Object.keys(raw).length) saveConfig();
+  }
   // Migrate a key saved by older builds, if this build can still decrypt it.
   if (!config.apiKey && apiKeyEnc) {
     try {
@@ -187,9 +197,11 @@ function saveConfig() {
   }
 }
 
+// The key saved by Glance (keychain), else one set in the environment.
+const KEY_ENV = { anthropic: "ANTHROPIC_API_KEY", openai: "OPENAI_API_KEY" };
+const savedKey = () => (config.provider === "openai" ? config.openaiKey : config.apiKey) || null;
 function apiKey() {
-  if (config.provider === "openai") return config.openaiKey || process.env.OPENAI_API_KEY || null;
-  return config.apiKey || process.env.ANTHROPIC_API_KEY || null;
+  return savedKey() || process.env[KEY_ENV[config.provider]] || null;
 }
 
 // Messages sent before the window finishes loading are queued, not lost.
@@ -237,8 +249,9 @@ function state() {
     shots: shots.map(({ id, thumb }) => ({ id, thumb })),
     hasKey: canAsk(),
     keyHint: apiKey() ? apiKey().slice(-4) : null,
-    // Set in the environment, not saved by Glance: Remove can't take it away.
-    keyFromEnv: !!apiKey() && !(config.provider === "openai" ? config.openaiKey : config.apiKey),
+    // The environment variable the key comes from, when Glance didn't save
+    // it: Remove can't take it away.
+    keyFromEnv: !savedKey() && apiKey() ? KEY_ENV[config.provider] : null,
     busy: !!current,
     savingNotes,
     spend,

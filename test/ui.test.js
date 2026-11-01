@@ -410,7 +410,7 @@ test("stopping Listen drops an unanswered question, so it isn't shown or auto-an
   await until(`!state.listening && pendingQuestion === null`);
 });
 
-test("Interview mode without a resume asks for one first; auto-answer says it needs Interview mode", { skip }, async () => {
+test("Interview mode without a resume reopens setup; auto-answer says it needs Interview mode", { skip }, async () => {
   await run(`await g.setSetting("resume", ""); await g.setSetting("jdCheckedAt", 0); await g.setSetting("style", "brief");`);
   await until(`state.style === "brief" && !state.resume`);
   await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
@@ -418,14 +418,18 @@ test("Interview mode without a resume asks for one first; auto-answer says it ne
   await run(`setMenu(false);`);
   await click("#modeBtn");
   await click('#modeMenu [data-value="interview"]');
-  await until(`state.style === "interview" && !document.getElementById("jdCard").hidden`);
-  assert.match(await run(`return document.getElementById("jdText").textContent;`), /Add your resume/);
-  assert.equal(await run(`return document.getElementById("jdNew").textContent;`), "Add resume");
-  assert.equal(await run(`return document.getElementById("jdSame").hidden;`), true); // no "Not now"
-  await click("#jdNew");
-  assert.ok(await shown("docForm"));
-  assert.equal(await run(`return docKind;`), "resume");
-  await click("#docCancel");
+  // Switched on without a resume: setup comes back, and can't be skipped.
+  await until(`state.style === "interview" && !!onboarding`);
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
+  await run(`await g.setSetting("resume", "Jane Doe, engineer");`);
+  await until(`!!state.resume`);
+  await run(`finishOnboarding();`);
+  // Clearing the resume while in Interview mode brings setup back too.
+  await run(`await g.setSetting("resume", "");`);
+  await until(`!state.resume && !!onboarding`);
+  await run(`await g.setSetting("resume", "Jane Doe, engineer");`);
+  await until(`!!state.resume`);
+  await run(`finishOnboarding();`);
   await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
   assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /as soon as the interviewer finishes/);
   await run(`setMenu(false);`);

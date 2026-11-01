@@ -174,8 +174,7 @@ function renderMenu() {
   $("profileMeta").textContent = filled ? `${filled} of 4` : "not added";
   $("jobMeta").textContent = docMeta(state.jobDescription);
   const providerLabel = (state.providers || []).find((p) => p.id === state.provider)?.label || "Anthropic";
-  const envVar = state.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
-  $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${envVar}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
+  $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${state.keyFromEnv}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
@@ -454,23 +453,21 @@ async function submit({ form = false } = {}) {
   autoAnswerPending = false;
   lastAutoQuestion = null;
   $("question").value = "";
-  // The question waited for: if Listen stops meanwhile, it's still the one asked.
-  let waitedFor = null;
+  // If Listen stops during the wait, the question waited for (with the last
+  // words still being transcribed) is still the one asked.
+  let waited = false;
   if (!typed && state.listening && pendingQuestion && (await stillHearing())) {
-    waitingForQuestion = true;
-    waitedFor = pendingQuestion;
+    waitingForQuestion = waited = true;
     renderStrip();
     const end = Date.now() + FINISH_WAIT_MS;
-    while (Date.now() < end && !waitTakenOver && (await stillHearing())) {
-      await new Promise((r) => setTimeout(r, 150));
-      waitedFor = pendingQuestion || waitedFor;
-    }
+    while (Date.now() < end && !waitTakenOver && (await stillHearing())) await new Promise((r) => setTimeout(r, 150));
     waitingForQuestion = false;
     if (waitTakenOver) return void (waitTakenOver = false);
   }
   // Nothing typed but a question was just heard: answer exactly that one. It
   // came from the call, so the screen isn't attached unless it refers to it.
-  const heard = !typed && (state.listening ? pendingQuestion?.text : waitedFor?.text);
+  const heard = !typed && (state.listening || waited) && pendingQuestion?.text;
+  if (!state.listening) pendingQuestion = null; // Listen stopped during the wait
   view = "answers";
   g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard) });
 }
@@ -523,12 +520,17 @@ g.on("state", (s) => {
   if (state.style !== "interview") askingJob = false;
   // Listening stopped: a question left unanswered belongs to that stretch of
   // the call, so it's neither shown nor auto-answered when Listen starts again.
+  // (Except the one an Answer press is still waiting on: see submit.)
   if (wasListening && !s.listening) {
-    pendingQuestion = null;
+    if (!waitingForQuestion) pendingQuestion = null;
     lastAutoQuestion = null;
     stopWatching();
   }
   wasListening = !!s.listening;
+  // Interview mode just lost its resume (switched on without one, or the
+  // resume was cleared): setup comes back until one is added.
+  const hadResumeOrOtherMode = before.style && (before.style !== "interview" || !!before.resume?.trim());
+  if (!onboarding && resumeMissing() && hadResumeOrOtherMode) startOnboarding();
   render();
 });
 g.on("notice", showNotice);
@@ -540,8 +542,9 @@ function onTranscript(l) {
   state.transcriptCount = (state.transcriptCount || 0) + 1;
   // The last words before Listen stopped are transcribed after it stops; they
   // belong to that stretch of the call, so they never become a question to
-  // show or auto-answer once Listen starts again.
-  if (state.listening) {
+  // show or auto-answer once Listen starts again, unless they finish the
+  // question an Answer press is waiting on.
+  if (state.listening || waitingForQuestion) {
     pendingQuestion = nextPendingQuestion(pendingQuestion, l, heard.slice(-1 - LEAD_LOOKBACK, -1));
     // Carries on a question auto-answer already started on: ask the whole thing.
     if (lastAutoQuestion && l.role === "them") {
@@ -1071,7 +1074,7 @@ function startOnboarding() {
   onboarding = {
     step: "welcome",
     needsKey: !state.hasKey,
-    use: state.style === "interview" ? "interviews" : state.resume?.trim() ? "both" : "interviews",
+    use: state.style === "interview" ? "interviews" : state.resume?.trim() ? "both" : "meetings",
   };
   // Prefill with what's already saved.
   $("obResume").value = state.resume || "";
@@ -1161,7 +1164,10 @@ $("obBack").addEventListener("click", () => {
   $("stage").scrollTop = 0;
 });
 $("onboardSkip").addEventListener("click", () => {
-  if (canSkipSetup()) finishOnboarding();
+  if (!canSkipSetup()) return;
+  // Skipped as Meetings: leave Interview mode, which needs a resume.
+  if (onboarding.use === "meetings" && state.style === "interview") g.setSetting("style", meetingStyle());
+  finishOnboarding();
 });
 $("keyStepBack").addEventListener("click", () => {
   onboarding.step = "welcome";
