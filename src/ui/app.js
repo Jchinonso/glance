@@ -45,7 +45,7 @@ function meetingStyle() {
 }
 const MODEL_HINTS = {
   "claude-opus-5-5": "Opus 5.5: most capable, $4 / $20 per million tokens",
-  "claude-sonnet-5-5": "Sonnet 5.5: nearly as good, half the price",
+  "claude-sonnet-5-5": "Sonnet 5.5: nearly as good, half the price, answers start sooner",
   "claude-haiku-5-5": "Haiku 5.5: fastest, about 1/40 of Opus's price",
 };
 let recording = null; // action whose shortcut is being recorded
@@ -174,7 +174,8 @@ function renderMenu() {
   $("profileMeta").textContent = filled ? `${filled} of 4` : "not added";
   $("jobMeta").textContent = docMeta(state.jobDescription);
   const providerLabel = (state.providers || []).find((p) => p.id === state.provider)?.label || "Anthropic";
-  $("keyMeta").textContent = state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
+  const envVar = state.provider === "openai" ? "OPENAI_API_KEY" : "ANTHROPIC_API_KEY";
+  $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${envVar}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
@@ -233,7 +234,7 @@ function renderStage() {
   // Cancel whenever the form was opened from Settings; Remove only with a key.
   $("keyManage").hidden = panel !== "key";
   $("cancelKeyBtn").hidden = panel !== "key";
-  $("removeKeyBtn").hidden = !state.keyHint;
+  $("removeKeyBtn").hidden = !state.keyHint || !!state.keyFromEnv;
   const shortcutsOpen = !needsKey && panel === "shortcuts";
   $("shortcutsPanel").hidden = !shortcutsOpen;
   if (shortcutsOpen) renderShortcutList();
@@ -264,7 +265,8 @@ function renderStage() {
     : hasJob
       ? "New interview? Keep the same role, or add its job description."
       : "Interviewing for a specific role? Add its job description so answers fit it.";
-  $("jdSame").textContent = hasJob && !needResume ? "Same role" : "Not now";
+  $("jdSame").textContent = hasJob ? "Same role" : "Not now";
+  $("jdSame").hidden = needResume; // the resume isn't optional for interviews
   $("jdNew").textContent = needResume ? "Add resume" : hasJob ? "New job description" : "Add job description";
   $("welcome").hidden = covered || view !== "answers" || answers.length > 0;
   $("answer").hidden = covered || view !== "answers" || page < 0;
@@ -452,17 +454,23 @@ async function submit({ form = false } = {}) {
   autoAnswerPending = false;
   lastAutoQuestion = null;
   $("question").value = "";
+  // The question waited for: if Listen stops meanwhile, it's still the one asked.
+  let waitedFor = null;
   if (!typed && state.listening && pendingQuestion && (await stillHearing())) {
     waitingForQuestion = true;
+    waitedFor = pendingQuestion;
     renderStrip();
     const end = Date.now() + FINISH_WAIT_MS;
-    while (Date.now() < end && !waitTakenOver && (await stillHearing())) await new Promise((r) => setTimeout(r, 150));
+    while (Date.now() < end && !waitTakenOver && (await stillHearing())) {
+      await new Promise((r) => setTimeout(r, 150));
+      waitedFor = pendingQuestion || waitedFor;
+    }
     waitingForQuestion = false;
     if (waitTakenOver) return void (waitTakenOver = false);
   }
   // Nothing typed but a question was just heard: answer exactly that one. It
   // came from the call, so the screen isn't attached unless it refers to it.
-  const heard = !typed && state.listening && pendingQuestion?.text;
+  const heard = !typed && (state.listening ? pendingQuestion?.text : waitedFor?.text);
   view = "answers";
   g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard) });
 }
@@ -525,15 +533,22 @@ g.on("state", (s) => {
 });
 g.on("notice", showNotice);
 // A line heard from the call (named so the UI tests can feed lines in).
+// Lines a lead-in may look back over (it keeps at most MAX_LEAD_LINES).
+const LEAD_LOOKBACK = 10;
 function onTranscript(l) {
   heard.push(l);
   state.transcriptCount = (state.transcriptCount || 0) + 1;
-  pendingQuestion = nextPendingQuestion(pendingQuestion, l, heard.slice(0, -1));
-  // Carries on a question auto-answer already started on: ask the whole thing.
-  if (lastAutoQuestion && l.role === "them") {
-    // Same rule as nextPendingQuestion: carrying on beats a new question.
-    if (l.start - lastAutoQuestion.at < CONTINUE_MS) pendingQuestion = nextPendingQuestion(lastAutoQuestion, l);
-    lastAutoQuestion = null;
+  // The last words before Listen stopped are transcribed after it stops; they
+  // belong to that stretch of the call, so they never become a question to
+  // show or auto-answer once Listen starts again.
+  if (state.listening) {
+    pendingQuestion = nextPendingQuestion(pendingQuestion, l, heard.slice(-1 - LEAD_LOOKBACK, -1));
+    // Carries on a question auto-answer already started on: ask the whole thing.
+    if (lastAutoQuestion && l.role === "them") {
+      // Same rule as nextPendingQuestion: carrying on beats a new question.
+      if (l.start - lastAutoQuestion.at < CONTINUE_MS) pendingQuestion = nextPendingQuestion(lastAutoQuestion, l);
+      lastAutoQuestion = null;
+    }
   }
   renderStrip();
   renderTranscriptLine(l);
@@ -1081,14 +1096,14 @@ function renderOnboarding() {
   for (const el of document.querySelectorAll("#onboard .ob-step")) el.hidden = el.dataset.step !== step;
   $("onboardStepLabel").textContent = stepLabel(steps, step);
   $("onboardHead").hidden = step === "welcome";
-  $("onboardSkip").hidden = step === "ready";
+  $("onboardSkip").hidden = step === "ready" || !canSkipSetup();
   $("obBack").hidden = step === "welcome";
   $("obNext").textContent = step === "welcome" ? "Get started" : step === "ready" ? "Start using Glance" : "Next";
   for (const b of $("obUse").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === onboarding.use));
   const words = $("obResume").value.trim() ? $("obResume").value.trim().split(/\s+/).length : 0;
   $("obResumeMeta").textContent = words ? `${words.toLocaleString()} words` : "";
   // Interview answers are built from the resume, so interviews need one;
-  // meetings don't. Skip setup still leaves without it.
+  // meetings don't. Skip setup stays hidden until one is saved.
   const needResume = step === "about" && resumeRequired();
   $("obResumeNeed").textContent = onboarding.use === "meetings" ? "(optional)" : "(required for interviews)";
   $("obAboutHint").textContent = onboarding.use === "meetings"
@@ -1101,6 +1116,9 @@ function renderOnboarding() {
   $("obAskKey").textContent = plainKeys(state.shortcuts?.ask || "");
 }
 const resumeRequired = () => onboarding?.use !== "meetings";
+const resumeMissing = () => state.style === "interview" && !state.resume?.trim();
+// Skip setup leaves only once a resume is saved, or for meetings.
+const canSkipSetup = () => !resumeRequired() || !!state.resume?.trim();
 // Saves what the current step collected, then moves on.
 function saveStep() {
   const { step } = onboarding;
@@ -1142,7 +1160,9 @@ $("obBack").addEventListener("click", () => {
   render();
   $("stage").scrollTop = 0;
 });
-$("onboardSkip").addEventListener("click", finishOnboarding);
+$("onboardSkip").addEventListener("click", () => {
+  if (canSkipSetup()) finishOnboarding();
+});
 $("keyStepBack").addEventListener("click", () => {
   onboarding.step = "welcome";
   render();
@@ -1225,9 +1245,12 @@ $("wipeForm").addEventListener("submit", (e) => {
 g.getState().then((s) => {
   const { transcript, ...rest } = s;
   state = rest;
+  wasListening = !!state.listening; // reloaded mid-call: stopping still drops the question
   heard = transcript;
   heard.forEach(renderTranscriptLine);
-  if (!state.onboarded) startOnboarding();
+  // Setup until done; and again while Interview mode has no resume, since
+  // interview answers are built from it (Skip setup can't leave without one).
+  if (!state.onboarded || resumeMissing()) startOnboarding();
   else maybeAskJob(); // opened in Interview mode: likely a new interview
   render();
   if (!onboarding) $("question").focus();

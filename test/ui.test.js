@@ -421,6 +421,7 @@ test("Interview mode without a resume asks for one first; auto-answer says it ne
   await until(`state.style === "interview" && !document.getElementById("jdCard").hidden`);
   assert.match(await run(`return document.getElementById("jdText").textContent;`), /Add your resume/);
   assert.equal(await run(`return document.getElementById("jdNew").textContent;`), "Add resume");
+  assert.equal(await run(`return document.getElementById("jdSame").hidden;`), true); // no "Not now"
   await click("#jdNew");
   assert.ok(await shown("docForm"));
   assert.equal(await run(`return docKind;`), "resume");
@@ -428,6 +429,22 @@ test("Interview mode without a resume asks for one first; auto-answer says it ne
   await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
   assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /as soon as the interviewer finishes/);
   await run(`setMenu(false);`);
+});
+
+test("setup can't be skipped in Interview mode until a resume is saved", { skip }, async () => {
+  await run(`await g.setSetting("resume", ""); await g.setSetting("style", "interview"); startOnboarding(); render();`);
+  await until(`!!onboarding && !state.resume`);
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
+  await run(`document.getElementById("onboardSkip").click();`);
+  assert.ok(await run(`return !!onboarding;`));
+  await run(`onboarding.use = "meetings"; render();`); // meetings don't need one
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), false);
+  await run(`await g.setSetting("resume", "Jane Doe, engineer"); onboarding.use = "interviews";`);
+  await until(`!!state.resume`);
+  await run(`render();`);
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), false);
+  await click("#onboardSkip");
+  await until(`!onboarding`);
 });
 
 test("without an API key: the key form shows, the gear still opens Settings, Listen and Screenshot wait", { skip }, async () => {

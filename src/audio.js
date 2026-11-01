@@ -10,7 +10,12 @@ const SAMPLE_RATE = 16000;
 const FRAME = 480; // 30 ms at 16 kHz
 const PRE_ROLL_FRAMES = 10; // keep 300 ms before speech starts
 const END_SILENCE_FRAMES = 20; // ~600 ms of silence ends a segment; a question split by a pause is rejoined later
-const MAX_SEGMENT_FRAMES = 500; // 15 s hard cap
+const MAX_SEGMENT_FRAMES = 400; // 12 s hard cap (see AUDIO_CTX)
+// Whisper pads every clip to 30 s and encodes all of it. Encoding 768 frames
+// (15.36 s, 20 ms each) instead of 1500 halves transcription time with the
+// same text, as long as the clip ends well inside it: past about 14 s the
+// last words come out wrong or repeated, so segments stop at 12 s.
+const AUDIO_CTX = "768";
 const MIN_SPEECH_FRAMES = 12; // drop blips under ~360 ms
 const FLOOR_WINDOW_FRAMES = 167; // ~5 s of history for the noise floor
 
@@ -120,7 +125,7 @@ export async function whisper({ modelPath, binary, prompt }, pcm) {
     execFile(
       binary,
       // -sns suppresses non-speech tokens, which cuts invented text on noise.
-      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-sns", "-t", "4", ...(prompt ? ["--prompt", prompt] : [])],
+      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-sns", "-t", "4", "-ac", AUDIO_CTX, ...(prompt ? ["--prompt", prompt] : [])],
       { timeout: 30000 },
       (err, stdout) => {
         unlink(file).catch(() => {});
@@ -157,7 +162,7 @@ export class WhisperServer {
     const { modelPath, prompt } = opts;
     if (!path.isAbsolute(this.binary) || !existsSync(this.binary)) return;
     const port = 20000 + Math.floor(Math.random() * 40000);
-    const proc = spawn(this.binary, ["-m", modelPath, "-l", "en", "-nt", "-sns", "-t", "4", "--host", "127.0.0.1", "--port", String(port), ...(prompt ? ["--prompt", prompt] : [])], { stdio: "ignore" });
+    const proc = spawn(this.binary, ["-m", modelPath, "-l", "en", "-nt", "-sns", "-t", "4", "-ac", AUDIO_CTX, "--host", "127.0.0.1", "--port", String(port), ...(prompt ? ["--prompt", prompt] : [])], { stdio: "ignore" });
     proc.on("error", () => {});
     proc.on("exit", () => {
       if (this.proc === proc) this.proc = this.url = null;
@@ -264,8 +269,8 @@ export class Listener extends EventEmitter {
     // access is off or the app hasn't been reopened since it was granted.
     // "silent" fires if nothing but zeros arrives for silentAfterMs. Nothing
     // playing yet (Listen pressed before the call starts) looks the same, so
-    // it fires at most once per run, and never once any sound has come
-    // through: access is evidently working.
+    // it fires at most once each time Glance opens (not per Listen), and never
+    // once any sound has come through: access is evidently working.
     clearTimeout(this.silentTimer);
     if (!this.heardSound && !this.warnedSilent) {
       this.silentTimer = setTimeout(() => {

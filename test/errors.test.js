@@ -21,7 +21,7 @@ test("Anthropic: costs use each model's prices", () => {
   assert.equal(p.cost(u, "claude-opus-5-5"), 24);
   assert.equal(p.cost(u, "claude-sonnet-5-5"), 12);
   assert.equal(p.cost(u, "claude-haiku-5-5"), 0.6);
-  assert.equal(p.cost(u, "unknown-model"), 24); // falls back to the default
+  assert.equal(p.cost(u, "unknown-model"), 12); // falls back to the default (Sonnet)
 });
 
 // A tiny OpenAI-compatible server: records requests, replies as told.

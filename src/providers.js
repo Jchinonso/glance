@@ -17,7 +17,10 @@ export const ANTHROPIC_MODELS = {
   "claude-sonnet-5-5": { name: "Sonnet 5.5", fallback: true, price: { input: 2, output: 10, cacheWrite: 2.5, cacheRead: 0.2 } },
   "claude-haiku-5-5": { name: "Haiku 5.5", fallback: false, price: { input: 0.1, output: 0.5, cacheWrite: 0.125, cacheRead: 0.01 } },
 };
-export const DEFAULT_ANTHROPIC_MODEL = "claude-opus-5-5";
+// Sonnet by default: answers start sooner than on Opus, which matters live.
+export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
+// Compressing custom instructions happens once and must keep every fact.
+export const MOST_CAPABLE_ANTHROPIC_MODEL = "claude-opus-5-5";
 
 const text = (blocks) => blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
 
@@ -154,32 +157,36 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
         let used = usage();
         let buffer = "";
         const decoder = new TextDecoder();
+        // Server-sent events: one "data: {json}" per line, "[DONE]" at the end.
+        const handle = (line) => {
+          if (!line.startsWith("data:")) return;
+          const data = line.slice(5).trim();
+          if (data === "[DONE]") return;
+          let event;
+          try {
+            event = JSON.parse(data);
+          } catch {
+            return;
+          }
+          const choice = event.choices?.[0];
+          const delta = choice?.delta?.content;
+          if (delta) {
+            out += delta;
+            onText(delta);
+          }
+          if (choice?.finish_reason) stop = stopOf(choice.finish_reason);
+          if (event.usage) used = usage(event.usage);
+        };
         for await (const chunk of res.body) {
           buffer += decoder.decode(chunk, { stream: true });
           let nl;
-          // Server-sent events: one "data: {json}" per line, "[DONE]" at the end.
           while ((nl = buffer.indexOf("\n")) >= 0) {
-            const line = buffer.slice(0, nl).trim();
+            handle(buffer.slice(0, nl).trim());
             buffer = buffer.slice(nl + 1);
-            if (!line.startsWith("data:")) continue;
-            const data = line.slice(5).trim();
-            if (data === "[DONE]") continue;
-            let event;
-            try {
-              event = JSON.parse(data);
-            } catch {
-              continue;
-            }
-            const choice = event.choices?.[0];
-            const delta = choice?.delta?.content;
-            if (delta) {
-              out += delta;
-              onText(delta);
-            }
-            if (choice?.finish_reason) stop = stopOf(choice.finish_reason);
-            if (event.usage) used = usage(event.usage);
           }
         }
+        // Some servers end the last event without a newline.
+        handle((buffer + decoder.decode()).trim());
         return { text: out, usage: used, stop, refusal: null };
       })().catch((e) => {
         if (e?.name === "AbortError") e.aborted = true;

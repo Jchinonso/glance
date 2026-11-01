@@ -9,7 +9,7 @@ import { caveman, keepsFacts } from "./compress.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
 import { ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
-import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, PROVIDERS } from "./providers.js";
+import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, MOST_CAPABLE_ANTHROPIC_MODEL, PROVIDERS } from "./providers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -237,6 +237,8 @@ function state() {
     shots: shots.map(({ id, thumb }) => ({ id, thumb })),
     hasKey: canAsk(),
     keyHint: apiKey() ? apiKey().slice(-4) : null,
+    // Set in the environment, not saved by Glance: Remove can't take it away.
+    keyFromEnv: !!apiKey() && !(config.provider === "openai" ? config.openaiKey : config.apiKey),
     busy: !!current,
     savingNotes,
     spend,
@@ -581,7 +583,7 @@ async function compressSavedInstructions(text) {
   const llm = provider();
   // Compression happens once and must keep every fact, so on Anthropic it
   // always uses the most capable model; elsewhere, the chosen one.
-  const model = config.provider === "anthropic" ? DEFAULT_ANTHROPIC_MODEL : currentModel();
+  const model = config.provider === "anthropic" ? MOST_CAPABLE_ANTHROPIC_MODEL : currentModel();
   try {
     const short = (await compressInstructions(llm, model, text, addUsage)).slice(0, MAX_INSTRUCTIONS);
     if (config.customInstructions !== text) return; // edited again meanwhile
