@@ -1,14 +1,15 @@
 // Loaded before app.js as a plain script (isQuestion becomes a global).
 // Spoken questions often lose their "?" in transcription, so also look at how
 // the sentence starts.
-const QUESTION_START = /^(?:(?:so|and|okay|ok|alright|right|well|now|um|uh)[,.]?\s+)*(?:what|why|how|when|where|which|who|whose|can you|could you|would you|will you|do you|did you|have you|are you|is there|is it|should|tell me|walk me through|explain|describe|give me|does|did|is that|are there|was there|were you|any questions|anything you|how about|what about|imagine|suppose|let's say|say you|talk me through|take me through|tell us|walk us through|give us|design|implement|write a|write an|i'd like to hear|i'd love to hear|i'm curious)\b/i;
-// Checks the whole line and its last sentence, since people often lead with a
-// statement: "Thanks for that. Can you walk me through the deploy".
+const QUESTION_START = /^(?:(?:so|and|okay|ok|alright|right|well|now|um|uh)[,.]?\s+)*(?:(?:what|why|how|when|where|which|who|whose)(?!\s+(?:i|we|they|he|she)\b)|what i'd like|what i'm asking|what i'm getting at|what i mean is|what we want|where i'd like|where i want|where we'd like|what i want|what i'm looking for|what we're looking for|how would you|how do you|what would you|what do you|can you|could you|can we|could we|shall we|would you|will you|do you|did you|have you|are you|is there|is it|should|tell me|talk me through|talk about|talk to me about|take me through|tell us|walk me through|walk us through|run me through|run us through|help me understand|go over|go through|let's talk about|let's discuss|let's go over|i want to understand|i'd like to understand|i'd like to know|i want to know|i'm wondering|i wonder|your thoughts on|any experience|elaborate|explain|describe|give me|does|did|is that|are there|was there|were you|any questions|anything you|how about|what about|what if|imagine|suppose|let's say|say you|give us|design|implement|write a|write an|i'd like to hear|i'd love to hear|i'm curious)\b/i;
+// Checks the whole line and every sentence in it, plus a clause after a comma
+// that opens a question: "Thanks for that. Can you walk me through the deploy"
+// and "When I say scale, how would you shard it".
 function isQuestion(text) {
   const t = text.trim();
   if (/\?\s*$/.test(t) || QUESTION_START.test(t)) return true;
-  const sentences = t.split(/(?<=[.!?])\s+|,\s+(?=(?:so|and|but)\s)/i);
-  return sentences.length > 1 && QUESTION_START.test(sentences.at(-1).replace(/^(?:so|and|but)\s+/i, ""));
+  const sentences = t.split(/(?<=[.!?])\s+|,\s+(?=(?:(?:so|and|but)\s+|(?:what i'd like|what i'm asking|what i'm getting at|what i mean is|what we want|where i'd like|where i want|where we'd like|what i want|what i'm looking for|what we're looking for|how would you|how do you|what would you|what do you|how about|what about|what if)\b))/i);
+  return sentences.some((sentence) => QUESTION_START.test(sentence.replace(/^(?:so|and|but)\s+/i, "")));
 }
 
 // The question the Answer button sends ({ text, at } or null), after a new
@@ -18,9 +19,12 @@ function isQuestion(text) {
 //   transcription often splits one question at a short pause. A longer gap
 //   means the user was answering aloud, so it's a new turn.
 // - A new question replaces the old one.
-// - Otherwise a substantial line that isn't a question means the talk moved
-//   on (the interviewer asked something isQuestion missed), so the old
-//   question is dropped and the model picks the latest one from the transcript.
+// - A substantial line that isn't a question, within FOLLOW_UP_MS of the
+//   question, is the interviewer adding to it ("just whatever comes to mind"),
+//   so it keeps the old question unchanged. After that window it means the
+//   talk moved on (the interviewer asked something isQuestion missed), so the
+//   old question is dropped and the model picks the latest one from the
+//   transcript.
 // - Short lines ("take your time") keep it.
 // - A new question keeps the lead-in said just before it ("So looking at
 //   your experience with distributed systems, | how would you design…"):
@@ -28,6 +32,7 @@ function isQuestion(text) {
 //   next. `before` is the transcript up to (not including) this line.
 const MAX_PENDING = 400;
 const CONTINUE_MS = 2000;
+const FOLLOW_UP_MS = 10000;
 const MAX_LEAD_LINES = 2;
 function nextPendingQuestion(pending, { role, text, at, start = at }, before = []) {
   if (role !== "them") return pending;
@@ -35,7 +40,8 @@ function nextPendingQuestion(pending, { role, text, at, start = at }, before = [
   if (pending && at < pending.at) return pending;
   if (pending && start - pending.at < CONTINUE_MS && pending.text.length + t.length < MAX_PENDING) return { text: joinPieces(pending.text, t), at };
   if (isQuestion(t)) return { text: joinPieces(leadIn(before, start, MAX_PENDING - t.length), t), at };
-  return t.split(/\s+/).length >= 6 ? null : pending;
+  if (t.split(/\s+/).length < 6) return pending;
+  return pending && start - pending.at < FOLLOW_UP_MS ? pending : null;
 }
 
 function leadIn(before, start, room) {

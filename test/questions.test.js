@@ -30,8 +30,46 @@ test("detects interview prompts", () => {
   ]) assert.ok(isQuestion(q), q);
 });
 
+test("detects let us and shall openers", () => {
+  for (const q of ["Can we talk about your last team", "Could we go over the design", "Shall we start with your background"]) assert.ok(isQuestion(q), q);
+});
+
+test("detects let's talk openers", () => {
+  for (const q of ["Let's talk about a hard bug", "Let's discuss the tradeoffs", "Let's go over the rollout"]) assert.ok(isQuestion(q), q);
+});
+
+test("detects talk openers", () => {
+  for (const q of ["Talk about a time you led a project", "Talk to me about your current role"]) assert.ok(isQuestion(q), q);
+});
+
+test("detects understanding and walkthrough openers", () => {
+  for (const q of ["Help me understand how caching fits", "Run me through your last deploy", "Run us through the architecture"]) assert.ok(isQuestion(q), q);
+});
+
+test("detects wanting and wondering openers", () => {
+  for (const q of ["I want to understand the migration", "I'd like to understand your process", "I'd like to know why you chose Kafka", "I want to know how you measure success", "I'm wondering how you handle on-call", "I wonder what you would change"]) assert.ok(isQuestion(q), q);
+});
+
+test("detects thoughts, experience and elaboration openers", () => {
+  for (const q of ["Your thoughts on remote work", "Any experience with Kubernetes", "Have you ever shipped a breaking change", "Elaborate on the caching layer", "Go over the incident response", "Go through your testing strategy", "What if traffic doubles overnight"]) assert.ok(isQuestion(q), q);
+});
+
 test("ignores statements", () => {
   for (const s of ["I'll send the doc tomorrow.", "That sounds good to me", "Whatever works."]) assert.ok(!isQuestion(s), s);
+});
+
+test("wh-word statements are not questions, but real asks still are", () => {
+  for (const s of ["When I was at Google we used Kafka.", "What we did was migrate."]) assert.ok(!isQuestion(s), s);
+  for (const q of ["What I'd like to hear is how you scaled it", "When I say scale, how would you shard it", "What about caching", "How about sharding"]) assert.ok(isQuestion(q), q);
+});
+
+test("detects real asks that start with a wh-word and a subject pronoun", () => {
+  for (const q of [
+    "So what I'm asking is how you'd shard it",
+    "What I mean is, how would it scale",
+    "Where I'd like to start is your last role",
+    "What I'm getting at is the failure mode",
+  ]) assert.ok(isQuestion(q), q);
 });
 
 test("detects a question that follows a statement", () => {
@@ -41,6 +79,15 @@ test("detects a question that follows a statement", () => {
     "I see. What would you change",
   ]) assert.ok(isQuestion(q), q);
   assert.ok(!isQuestion("Thanks for that. I'll send the deploy notes later."));
+});
+
+test("detects a question in any sentence, not just the last", () => {
+  for (const q of [
+    "Thanks. Can you explain the deploy. Take your time.",
+    "We use Postgres today. How would you scale reads? I'll wait.",
+    "I see. What would you change. Let me note that down.",
+  ]) assert.ok(isQuestion(q), q);
+  assert.ok(!isQuestion("Thanks. I'll send the deploy notes later. Take your time."));
 });
 
 const line = (role, text, at, start = at) => ({ role, text, at, start });
@@ -53,9 +100,19 @@ test("pending question: kept through short lines, dropped when talk moves on", (
   p = nextPendingQuestion(p, line("them", "Take your time.", 20000, 19000));
   assert.equal(p.text, q);
   // User answered aloud (long gap), then an undetected follow-up: the old question must not be resent.
-  assert.equal(nextPendingQuestion(p, line("them", "Okay so I want to understand how you handle tradeoffs there", 40000, 36000)), null);
+  assert.equal(nextPendingQuestion(p, line("them", "the team handles tradeoffs there all the time", 40000, 36000)), null);
   // A new detected question replaces the old one.
   assert.equal(nextPendingQuestion(p, line("them", "Why did you pick Kafka?", 40000, 38000)).text, "Why did you pick Kafka?");
+});
+
+test("pending question: a follow-up comment within 10 s keeps it, after 10 s it clears", () => {
+  const p = { text: "Tell me about a time you led a project", at: 10000 };
+  // Within the follow-up window: the old question stays unchanged.
+  assert.deepEqual({ ...nextPendingQuestion(p, line("them", "just whatever comes to mind, nothing formal", 15000, 14000)) }, p);
+  assert.deepEqual({ ...nextPendingQuestion(p, line("them", "just whatever comes to mind, nothing formal", 19000)) }, p);
+  // After the window, a substantial non-question means the talk moved on.
+  assert.equal(nextPendingQuestion(p, line("them", "just whatever comes to mind, nothing formal", 21000)), null);
+  assert.equal(nextPendingQuestion(p, line("them", "just whatever comes to mind, nothing formal", 25000, 24000)), null);
 });
 
 test("pending question: a line right after a short pause continues it", () => {
@@ -64,8 +121,10 @@ test("pending question: a line right after a short pause continues it", () => {
   assert.equal(nextPendingQuestion(p, line("them", "And why?", 11500, 10800)).text, `${p.text} And why?`);
   // After a long gap the same words are a new turn, not a continuation.
   assert.equal(nextPendingQuestion(p, line("them", "And why?", 30000, 29000)).text, "And why?");
-  // A long monologue stops being appended and falls back to the normal rule.
-  assert.equal(nextPendingQuestion(p, line("them", "x ".repeat(250).trim(), 30000, 10700)), null);
+  // A long monologue isn't appended; within the follow-up window it keeps the
+  // question, and after the window it falls back to the normal rule.
+  assert.deepEqual({ ...nextPendingQuestion(p, line("them", "x ".repeat(250).trim(), 10700, 10700)) }, p);
+  assert.equal(nextPendingQuestion(p, line("them", "x ".repeat(250).trim(), 30000, 29000)), null);
 });
 
 test("pending question: mic lines never touch it", () => {

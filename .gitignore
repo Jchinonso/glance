@@ -3,3 +3,4 @@ dist/
 models/
 .DS_Store
 vendor/
+.plan/

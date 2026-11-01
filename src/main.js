@@ -480,7 +480,8 @@ async function captureScreen() {
 
 // heard: the question came from the call transcript, so an automatic screenshot
 // would only add tokens.
-async function runAsk(question, { heard = false } = {}) {
+async function runAsk(question, { heard = false, heardAt = null } = {}) {
+  const startedAt = Date.now();
   if (current) current.abort();
   if (!canAsk()) {
     send("notice", { level: "error", text: config.provider === "openai" ? "Set the model and API key for your OpenAI-compatible server first." : "Add your Anthropic API key first." });
@@ -508,6 +509,7 @@ async function runAsk(question, { heard = false } = {}) {
 
   if (cancelled) {
     if (current?.id === id) current = null;
+    log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=0 aborted=true`);
     send("answer-end", { id, aborted: true });
     return broadcastState();
   }
@@ -519,6 +521,8 @@ async function runAsk(question, { heard = false } = {}) {
 
   let text = "";
   const model = currentModel();
+  log(`ask id=${id} heard=${heard} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${config.effort} screenshots=${screenshots.length}`);
+  let firstToken = false;
   const job = ask({
     provider: llm,
     model,
@@ -534,6 +538,10 @@ async function runAsk(question, { heard = false } = {}) {
     profile: profile(),
     onText: (delta) => {
       text += delta;
+      if (!firstToken) {
+        firstToken = true;
+        log(`first token id=${id} ms=${Date.now() - startedAt}`);
+      }
       send("answer-delta", { id, text: delta });
     },
   });
@@ -544,12 +552,14 @@ async function runAsk(question, { heard = false } = {}) {
     if (text) answers.push({ id, question: q, context, answer: text });
     const u = result.usage;
     const cost = addUsage(u, model);
+    log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=${u.output} aborted=false`);
     send("answer-end", { id, error: problem, usage: { input: u.input + u.cacheRead + u.cacheWrite, output: u.output, cost, model: llm.name(model) } });
   } catch (e) {
     const aborted = isAbort(e);
     if (!aborted) log("answer failed:", e);
     // A stopped answer still shows, so keep it for follow-ups and notes.
     if (aborted && text) answers.push({ id, question: q, context, answer: text, stopped: true });
+    log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=0 aborted=${aborted}`);
     send("answer-end", { id, error: aborted ? null : describeError(llm, e, model), aborted });
   } finally {
     if (current?.id === id) current = null;
@@ -717,6 +727,7 @@ function createListener() {
     send("transcript", line);
   };
   l.on("line", (line) => {
+    log(`heard: durMs=${line.at - line.start} transcribeMs=${line.transcribeMs} waitMs=${line.transcribedAt - line.at} queued=${line.queued} via=${line.via} words=${line.text.trim().split(/\s+/).length} text="${line.text.slice(0, 80)}"`);
     if (isBackchannel(line.text)) return;
     if (isPromptHallucination(line.text, [...TECH_TERMS.split(", "), ...config.vocabulary.split(",")])) return;
     keep(line);
@@ -845,7 +856,7 @@ ipcMain.handle("pause-shortcuts", (_e, paused) => {
 });
 
 ipcMain.handle("get-state", () => ({ ...state(), transcript: transcript.slice(-TRANSCRIPT_SYNC) }));
-ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard }));
+ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard, heardAt: options?.heardAt ?? null }));
 // Reads a resume or job description file for the form to show; nothing is
 // saved until the user presses Save there.
 ipcMain.handle("import-doc", async (_e, kind) => {
@@ -965,6 +976,7 @@ ipcMain.handle("clear", () => {
   broadcastState();
 });
 ipcMain.handle("hide", () => hideWindow());
+ipcMain.on("log", (_e, msg) => log("ui:", String(msg).slice(0, 300)));
 ipcMain.on("resize", (_e, height) => {
   if (!win || !Number.isFinite(height)) return;
   const [width] = win.getSize();
