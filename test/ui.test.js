@@ -431,7 +431,10 @@ test("Interview mode without a resume reopens setup; auto-answer says it needs I
   await click('#modeMenu [data-value="interview"]');
   // Switched on without a resume: setup comes back, and can't be skipped.
   await until(`state.style === "interview" && !!onboarding`);
+  assert.equal(await run(`return onboarding.step;`), "about"); // straight to the resume
+  assert.ok(await shown("obResume"));
   assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
+  assert.equal(await run(`return document.getElementById("obNext").disabled;`), true);
   await run(`await g.setSetting("resume", "Jane Doe, engineer");`);
   await until(`!!state.resume`);
   await run(`finishOnboarding();`);

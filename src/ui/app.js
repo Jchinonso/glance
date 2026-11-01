@@ -528,10 +528,12 @@ g.on("state", (s) => {
   }
   wasListening = !!s.listening;
   // Interview mode just lost its resume (switched on without one, or the
-  // resume was cleared): setup comes back until one is added.
+  // resume was cleared): setup opens at the resume step until one is added.
   const hadResumeOrOtherMode = before.style && (before.style !== "interview" || !!before.resume?.trim());
-  if (!onboarding && resumeMissing() && hadResumeOrOtherMode) startOnboarding();
+  const askResume = !onboarding && resumeMissing() && hadResumeOrOtherMode;
+  if (askResume) startOnboarding("about");
   render();
+  if (askResume) $("obResume").focus();
 });
 g.on("notice", showNotice);
 // A line heard from the call (named so the UI tests can feed lines in).
@@ -1067,12 +1069,13 @@ new MutationObserver(fit).observe($("glass"), { subtree: true, attributes: true,
 // Welcome and setup: welcome, then (only if needed) the key, about you, the
 // job description for interviews, and a ready screen. Shown on first launch
 // and from Settings > General > Show welcome again.
-function startOnboarding() {
+// step: where it opens; "about" (the resume) when only the resume is missing.
+function startOnboarding(step = "welcome") {
   g.setSetting("setupActive", true);
   panel = null;
   backToSettings = false;
   onboarding = {
-    step: "welcome",
+    step,
     needsKey: !state.hasKey,
     use: state.style === "interview" ? "interviews" : state.resume?.trim() ? "both" : "meetings",
   };
@@ -1256,7 +1259,8 @@ g.getState().then((s) => {
   heard.forEach(renderTranscriptLine);
   // Setup until done; and again while Interview mode has no resume, since
   // interview answers are built from it (Skip setup can't leave without one).
-  if (!state.onboarded || resumeMissing()) startOnboarding();
+  if (!state.onboarded) startOnboarding();
+  else if (resumeMissing()) startOnboarding("about");
   else maybeAskJob(); // opened in Interview mode: likely a new interview
   render();
   if (!onboarding) $("question").focus();

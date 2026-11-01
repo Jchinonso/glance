@@ -116,12 +116,15 @@ test("listener warns about silence only once per run, not on every Listen", asyn
 test("listener doesn't warn once real sound has arrived", async () => {
   const { Listener } = await import("../src/audio.js");
   const here = new URL("../package.json", import.meta.url).pathname;
-  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/urandom"), silentAfterMs: 1500 });
+  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/urandom"), silentAfterMs: 4000 });
   let silent = 0;
   l.on("silent", () => silent++);
   l.on("error", () => {});
   assert.equal(l.start(), true);
-  await new Promise((r) => setTimeout(r, 2500));
+  // Long enough for the fake capture to start under a loaded test run; it
+  // sends 2 s of sound at once and then nothing, so a warning would mean the
+  // sound was ignored.
+  await new Promise((r) => setTimeout(r, 5000));
   l.stop();
   assert.equal(silent, 0);
 });
