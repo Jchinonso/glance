@@ -152,6 +152,7 @@ export class WhisperServer {
     this.opts = null; // set while the server should be running
     this.restarts = 0;
     this.ready = Promise.resolve(false);
+    this.readySettled = true;
     process.on("exit", () => this.stop()); // never leave the model loaded after quit
   }
 
@@ -171,7 +172,8 @@ export class WhisperServer {
     const url = `http://127.0.0.1:${port}`;
     // Ready once it answers HTTP; the model loads in about a second. The
     // first run of a newly installed copy can take 20 s more (see prepare).
-    this.ready = (async () => {
+    this.readySettled = false;
+    const ready = (async () => {
       for (let i = 0; i < 240 && this.proc === proc; i++) {
         try {
           await fetch(url, { signal: AbortSignal.timeout(1000) });
@@ -182,6 +184,11 @@ export class WhisperServer {
       }
       return false;
     })();
+    this.ready = ready;
+    ready.then(
+      () => { if (this.ready === ready) this.readySettled = true; },
+      () => { if (this.ready === ready) this.readySettled = true; },
+    );
   }
 
   async transcribe(pcm) {
@@ -191,7 +198,9 @@ export class WhisperServer {
       this.start(this.opts, { restart: true });
       return null;
     }
-    if (!this.proc || !(await this.ready) || !this.url) return null;
+    // Still starting: don't hold up the serial queue for up to a minute; this
+    // segment uses whisper-cli and later ones use the server once it is ready.
+    if (!this.proc || !this.readySettled || !(await this.ready) || !this.url) return null;
     const form = new FormData();
     form.append("file", new Blob([wav(pcm)], { type: "audio/wav" }), "audio.wav");
     form.append("response_format", "text");
@@ -334,8 +343,11 @@ export class Listener extends EventEmitter {
     let item;
     while ((item = this.pending.shift())) {
       const { pcm, at } = item;
+      const began = Date.now();
+      let via = "server";
       let text = await this.server.transcribe(pcm);
       if (text === null) {
+        via = "cli";
         const r = await whisper(this.opts, pcm);
         if (r.error) {
           // Once per listen: a broken transcriber fails on every segment.
@@ -345,8 +357,9 @@ export class Listener extends EventEmitter {
         }
         text = r.text;
       } else if (NOISE.test(text)) text = "";
+      const transcribedAt = Date.now();
       // start: when the speech began; at: when it ended.
-      if (text) this.emit("line", { role: "them", text, at, start: at - Math.round((pcm.length / 2 / SAMPLE_RATE) * 1000) });
+      if (text) this.emit("line", { role: "them", text, at, start: at - Math.round((pcm.length / 2 / SAMPLE_RATE) * 1000), transcribeMs: transcribedAt - began, transcribedAt, queued: this.pending.length, via });
     }
     this.working = false;
     if (!this.running) this.server.stop(); // stopped meanwhile: free the model now the last segments are done

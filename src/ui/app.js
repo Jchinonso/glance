@@ -53,6 +53,7 @@ let recording = null; // action whose shortcut is being recorded
 // Open answers as key points). The link on an answer switches just that view.
 let answerView = "full";
 let editingSaid = false; // the "I said something else" field is open
+let questionTypedAt = 0; // when the question box was last edited
 
 const SHORTCUT_LABELS = {
   snap: "Screenshot and answer",
@@ -333,7 +334,10 @@ function renderAskBtn() {
   $("askBtn").textContent = stop ? "Stop" : "Ask";
   $("askBtn").title = stop ? "Stop this answer" : `Ask (${plainKeys(state.shortcuts?.ask || "")})`;
 }
-$("question").addEventListener("input", renderAskBtn);
+$("question").addEventListener("input", () => {
+  questionTypedAt = Date.now();
+  renderAskBtn();
+});
 
 function renderShots() {
   const shots = state.shots || [];
@@ -467,17 +471,21 @@ async function submit({ form = false } = {}) {
   // Nothing typed but a question was just heard: answer exactly that one. It
   // came from the call, so the screen isn't attached unless it refers to it.
   const heard = !typed && (state.listening || waited) && pendingQuestion?.text;
+  const heardAt = heard ? pendingQuestion.at : null;
   if (!state.listening) pendingQuestion = null; // Listen stopped during the wait
   view = "answers";
-  g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard) });
+  g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard), heardAt });
 }
 
 // Auto-answer (Interview mode, listening, Settings > Interview): once a
 // question is pending and the other side has gone quiet for QUIET_MS (speech
 // over and transcribed), answer it as if Answer were pressed. It never
-// interrupts an answer you asked for or a question you're typing, and skips
-// while a form is open. Each question is answered once; earlier answers stay.
+// interrupts an answer you asked for or a question you're typing: text in the
+// question box holds it off for TYPING_HOLD_MS after the last edit. It skips
+// while a panel is open (the transcript view doesn't count). Each question is
+// answered once; earlier answers stay.
 const QUIET_MS = 300;
+const TYPING_HOLD_MS = 5000;
 let autoTimer = null;
 let autoAnswerId = null; // the answer auto-answer started, while it streams
 // The question auto-answer last answered ({ text, at }): if they pause longer
@@ -491,16 +499,19 @@ function watchForQuestion() {
   autoTimer = setInterval(async () => {
     const own = state.busy && autoAnswerId !== answers.at(-1)?.id; // you asked for the one streaming
     if (!autoAnswerOn() || !pendingQuestion || waitingForQuestion) return stopWatching();
-    if (own || $("question").value.trim() || panelOpen() || panel === "settings") return; // keep watching
+    const typing = $("question").value.trim() && Date.now() - questionTypedAt < TYPING_HOLD_MS;
+    if (own || typing || panel) return; // keep watching
     if (await stillHearing()) return void (quietSince = null);
     quietSince ??= Date.now();
     if (Date.now() - quietSince < QUIET_MS) return;
     stopWatching();
-    const text = pendingQuestion.text;
+    const { text, at: heardAt } = pendingQuestion;
+    const lastHeard = heard.at(-1);
+    g.log?.(`auto-answer fired quietWaitMs=${lastHeard ? Date.now() - lastHeard.at : 0}`);
     lastAutoQuestion = { ...pendingQuestion };
     view = "answers";
     autoAnswerPending = true;
-    g.ask(text, { heard: !mentionsScreen(text) });
+    g.ask(text, { heard: !mentionsScreen(text), heardAt });
   }, 100);
 }
 function stopWatching() {
@@ -539,6 +550,17 @@ g.on("notice", showNotice);
 // A line heard from the call (named so the UI tests can feed lines in).
 // Lines a lead-in may look back over (it keeps at most MAX_LEAD_LINES).
 const LEAD_LOOKBACK = 10;
+function logQuestionChange(before, after, text) {
+  let what = null;
+  if (before && after) {
+    if (after.text !== before.text) {
+      const old = before.text.replace(/[.?!]$/, "");
+      what = old && after.text.startsWith(old) ? "question extended" : "question replaced";
+    }
+  } else if (before) what = "question dropped";
+  else if (after) what = "question detected";
+  if (what) g.log?.(`${what} text="${text.slice(0, 80)}"`);
+}
 function onTranscript(l) {
   heard.push(l);
   state.transcriptCount = (state.transcriptCount || 0) + 1;
@@ -547,6 +569,7 @@ function onTranscript(l) {
   // show or auto-answer once Listen starts again, unless they finish the
   // question an Answer press is waiting on.
   if (state.listening || waitingForQuestion) {
+    const before = pendingQuestion;
     pendingQuestion = nextPendingQuestion(pendingQuestion, l, heard.slice(-1 - LEAD_LOOKBACK, -1));
     // Carries on a question auto-answer already started on: ask the whole thing.
     if (lastAutoQuestion && l.role === "them") {
@@ -554,6 +577,7 @@ function onTranscript(l) {
       if (l.start - lastAutoQuestion.at < CONTINUE_MS) pendingQuestion = nextPendingQuestion(lastAutoQuestion, l);
       lastAutoQuestion = null;
     }
+    logQuestionChange(before, pendingQuestion, l.text);
   }
   renderStrip();
   renderTranscriptLine(l);

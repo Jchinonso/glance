@@ -85,6 +85,50 @@ async function fakeTee(source) {
   return bin;
 }
 
+// A stand-in for whisper-cli that prints fixed text.
+async function fakeCli(text) {
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(new URL("file://" + tmpdir() + "/glance-cli-").pathname);
+  const bin = `${dir}/whisper-cli`;
+  writeFileSync(bin, `#!/bin/sh\necho ${JSON.stringify(text)}\n`);
+  chmodSync(bin, 0o755);
+  return bin;
+}
+
+test("heard lines carry transcribe timing and the transcriber used", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: "/usr/bin/true" });
+  l.server.transcribe = async () => {
+    await new Promise((r) => setTimeout(r, 30));
+    return "hello there";
+  };
+  const lines = [];
+  l.on("line", (line) => lines.push(line));
+  l.enqueue(pcm(1, 8000));
+  l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 200));
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].via, "server");
+  assert.ok(lines[0].transcribeMs >= 25, `transcribeMs ${lines[0].transcribeMs}`);
+  assert.ok(Number.isFinite(lines[0].transcribedAt));
+  assert.equal(lines[0].queued, 1);
+  assert.equal(lines[1].queued, 0);
+  assert.equal(lines[0].at - lines[0].start, 1000);
+});
+
+test("heard lines say when whisper-cli did the transcription", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: await fakeCli("hello from cli") });
+  l.server.transcribe = async () => null;
+  const got = new Promise((r) => l.once("line", r));
+  l.enqueue(pcm(1, 8000));
+  const line = await got;
+  assert.equal(line.via, "cli");
+  assert.equal(line.text, "hello from cli");
+  assert.equal(line.queued, 0);
+});
+
 test("listener warns once when nothing but silence arrives (system audio blocked)", async () => {
   const { Listener } = await import("../src/audio.js");
   const here = new URL("../package.json", import.meta.url).pathname;

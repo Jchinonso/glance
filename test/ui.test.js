@@ -332,12 +332,14 @@ test("auto-answer waits while you type, and stays off in Meeting mode", { skip }
   await run(`
     stillHearing = async () => false;
     state.listening = true;
-    document.getElementById("question").value = "my own question";
+    const q = document.getElementById("question");
+    q.value = "my own question";
+    q.dispatchEvent(new Event("input"));
     onTranscript({ role: "them", text: "Why do you want this job?", start: ${now + 3000}, at: ${now + 4500} });
   `);
   await sleep(1200);
   assert.equal(await run(`return answers.length;`), count, "typing holds it off");
-  await run(`document.getElementById("question").value = ""; state.listening = true;`);
+  await run(`document.getElementById("question").value = ""; questionTypedAt = 0; state.listening = true;`);
   await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
   assert.equal(await run(`return answers.at(-1).question;`), "Why do you want this job?");
 
@@ -351,6 +353,42 @@ test("auto-answer waits while you type, and stays off in Meeting mode", { skip }
   await click('#modeMenu [data-value="interview"]');
   await until(`state.style === "interview"`);
   await run(`pendingQuestion = null; stillHearing = async () => false; if (!document.getElementById("jdCard").hidden) document.getElementById("jdSame").click();`);
+});
+
+test("auto-answer fires with the transcript view open", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`
+    stillHearing = async () => false;
+    pendingQuestion = null;
+    state.listening = true;
+    document.getElementById("question").value = "";
+    questionTypedAt = 0;
+    view = "transcript";
+    render();
+    onTranscript({ role: "them", text: "What would you do differently next time?", start: ${now + 7000}, at: ${now + 8500} });
+  `);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  assert.deepEqual(await run(`const a = answers.at(-1); return [a.question, a.auto, view];`), ["What would you do differently next time?", true, "answers"]);
+});
+
+test("auto-answer fires when text in the question box is stale", { skip }, async () => {
+  const now = Date.now();
+  const count = await run(`return answers.length;`);
+  await run(`
+    stillHearing = async () => false;
+    pendingQuestion = null;
+    state.listening = true;
+    view = "answers";
+    const q = document.getElementById("question");
+    q.value = "leftover question";
+    q.dispatchEvent(new Event("input"));
+    questionTypedAt = Date.now() - 6000;
+    onTranscript({ role: "them", text: "What would you improve about this design?", start: ${now + 10000}, at: ${now + 11500} });
+  `);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  assert.deepEqual(await run(`const a = answers.at(-1); return [a.question, a.auto];`), ["What would you improve about this design?", true]);
+  await run(`document.getElementById("question").value = ""; questionTypedAt = 0;`);
 });
 
 test("auto-answer: if they carry on after a long pause, the whole question is answered again and the first answer stays", { skip }, async () => {
