@@ -1009,6 +1009,9 @@ app.whenReady().then(() => {
   }
   createWindow();
   createTray();
+  // Before the first Listen: see Listener.prepare.
+  listener ??= createListener();
+  listener.prepare();
   screen.on("display-removed", keepOnScreen);
   screen.on("display-metrics-changed", keepOnScreen);
   // Instructions saved before auto-compression existed: compress them once now.

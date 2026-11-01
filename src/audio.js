@@ -169,9 +169,10 @@ export class WhisperServer {
     });
     this.proc = proc;
     const url = `http://127.0.0.1:${port}`;
-    // Ready once it answers HTTP; the model loads in about a second.
+    // Ready once it answers HTTP; the model loads in about a second. The
+    // first run of a newly installed copy can take 20 s more (see prepare).
     this.ready = (async () => {
-      for (let i = 0; i < 80 && this.proc === proc; i++) {
+      for (let i = 0; i < 240 && this.proc === proc; i++) {
         try {
           await fetch(url, { signal: AbortSignal.timeout(1000) });
           this.url = url;
@@ -236,6 +237,17 @@ export class Listener extends EventEmitter {
     this.running = false;
     this.heardSound = false; // any sound since Glance opened
     this.warnedSilent = false;
+  }
+
+  // macOS checks a newly installed program and its libraries the first time
+  // they run, which takes 15-25 s on an M1; after that they start in under a
+  // second. Run both transcribers once when Glance opens (just printing
+  // their help: no model loaded), so that wait isn't on the first Listen,
+  // where it held up every heard question and auto-answer.
+  prepare() {
+    for (const binary of [this.server.binary, this.opts.binary]) {
+      if (path.isAbsolute(binary) && existsSync(binary)) execFile(binary, ["--help"], { timeout: 60000 }, () => {});
+    }
   }
 
   // Returns false (with one clear error) when a required tool is missing.
