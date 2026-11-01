@@ -5,7 +5,7 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
@@ -83,7 +83,9 @@ before(async () => {
   modelUrl = `http://127.0.0.1:${server.address().port}/v1`;
 
   dir = mkdtempSync(path.join(os.tmpdir(), "glance-ui-"));
-  writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: modelUrl, openaiModel: "fake", autoScreen: false, style: "brief" }));
+  writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: modelUrl, openaiModel: "fake", autoScreen: false, style: "brief",
+    // As written by builds before 1.2.4: every setting saved, Opus included.
+    model: "claude-opus-5-5", effort: "low", invisible: true }));
   const port = 9400 + Math.floor(Math.random() * 500);
   app = spawn(electronPath, [root, `--remote-debugging-port=${port}`], { env: { ...process.env, GLANCE_TEST_DIR: dir }, stdio: "ignore" });
   let page;
@@ -109,6 +111,15 @@ after(async () => {
   // Electron writes to its folder while quitting, so remove it after exit.
   if (app && app.exitCode === null) await new Promise((r) => (app.once("exit", r), app.kill()));
   if (dir) rmSync(dir, { recursive: true, force: true });
+});
+
+test("old settings: Opus moves to the default, other providers' model stays, defaults aren't saved", { skip }, async () => {
+  assert.equal(await run(`return state.model;`), "claude-sonnet-5-5");
+  assert.equal(await run(`return state.provider;`), "openai");
+  const saved = JSON.parse(readFileSync(path.join(dir, "config.json"), "utf8"));
+  assert.equal(saved.openaiModel, "fake");
+  assert.equal(saved.configVersion, 1);
+  for (const k of ["model", "effort", "invisible"]) assert.ok(!(k in saved), `${k} is a default, not saved`);
 });
 
 test("first launch: welcome, about you, job description, ready", { skip }, async () => {

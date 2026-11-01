@@ -58,9 +58,21 @@ const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openai
   compactAnswers: false,
   // Interview mode, while listening: answer a heard question once they finish.
   autoAnswer: true,
-  // Set once Opus, the old default, has been moved to the new one (Sonnet).
-  modelDefaultMoved: false,
   apiKey: null, openaiKey: null };
+// Saved settings are upgraded in order, each step once: a file at version n
+// runs CONFIG_MIGRATIONS[n] onward. Only settings changed from their default
+// are saved, so a new default reaches everyone who kept the old one; steps
+// here are only for files written before that.
+const CONFIG_MIGRATIONS = [
+  // 1.2.4: builds before saved every setting, defaults included, so Opus (the
+  // Anthropic default then) is in most files without being chosen. Clear it
+  // so the current default applies. openaiModel, used by every other
+  // provider, isn't touched.
+  (settings) => {
+    if (settings.model === "claude-opus-5-5") delete settings.model;
+    delete settings.modelDefaultMoved; // written by one 1.2.4 test build
+  },
+];
 const PROFILE_FIELDS = ["profileName", "salary", "visa", "notice"];
 const profile = () => ({ name: config.profileName, salary: config.salary, visa: config.visa, notice: config.notice });
 // Resume and job description are sent word for word (never compressed), so
@@ -154,21 +166,16 @@ function loadConfig() {
   try {
     raw = JSON.parse(readFileSync(configPath, "utf8"));
   } catch {}
-  const { apiKeyEnc, apiKey: _ignored, openaiKey: _ignored2, ...settings } = raw;
+  const { apiKeyEnc, apiKey: _ignored, openaiKey: _ignored2, configVersion = 0, ...settings } = raw;
+  for (const migrate of CONFIG_MIGRATIONS.slice(configVersion)) migrate(settings);
   // A value of the wrong type (hand edit, older build) falls back to the default.
   for (const [k, v] of Object.entries(settings)) {
     if (k in defaults && defaults[k] !== null && typeof v !== typeof defaults[k]) delete settings[k];
   }
   config = { ...defaults, ...settings, apiKey: readKeychainKey(), openaiKey: readKeychainKey(KEYCHAIN.accounts.openai) };
   if (!(config.provider in PROVIDERS)) config.provider = "anthropic";
-  // Opus was the default before 1.2.4, and every setting is saved, so most
-  // installs have it without choosing it. Move them to the faster default
-  // once; picking Opus again afterwards sticks.
-  if (!config.modelDefaultMoved) {
-    if (config.model === "claude-opus-5-5") config.model = DEFAULT_ANTHROPIC_MODEL;
-    config.modelDefaultMoved = true;
-    if (Object.keys(raw).length) saveConfig();
-  }
+  // Upgraded: save now, so the migrations don't run again.
+  if (Object.keys(raw).length && configVersion < CONFIG_MIGRATIONS.length) saveConfig();
   // Migrate a key saved by older builds, if this build can still decrypt it.
   if (!config.apiKey && apiKeyEnc) {
     try {
@@ -189,8 +196,10 @@ function loadConfig() {
 function saveConfig() {
   if (wiping) return;
   const { apiKey, openaiKey, ...rest } = config;
+  // Settings still at their default aren't written (see CONFIG_MIGRATIONS).
+  const changed = Object.fromEntries(Object.entries(rest).filter(([k, v]) => !(k in defaults) || JSON.stringify(v) !== JSON.stringify(defaults[k])));
   try {
-    writeFileSync(`${configPath}.tmp`, JSON.stringify(rest, null, 2));
+    writeFileSync(`${configPath}.tmp`, JSON.stringify({ configVersion: CONFIG_MIGRATIONS.length, ...changed }, null, 2));
     renameSync(`${configPath}.tmp`, configPath);
   } catch (e) {
     log("saving settings failed:", e);
