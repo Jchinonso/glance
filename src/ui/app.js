@@ -1149,6 +1149,7 @@ function renderOnboarding() {
   $("onboardSkip").hidden = step === "ready" || !canSkipSetup();
   $("obBack").hidden = step === "welcome";
   $("obNext").textContent = step === "welcome" ? "Get started" : step === "speech" ? "Continue" : step === "ready" ? "Start using Glance" : "Next";
+  const speechPending = step === "speech" && state.speech?.status !== "ready";
   if (step === "speech") {
     const speech = state.speech || {};
     if (speech.status !== "ready") onboarding.sawSpeechDownloading = true;
@@ -1173,16 +1174,16 @@ function renderOnboarding() {
   $("obAboutHint").textContent = onboarding.use === "meetings"
     ? "So answers about you are accurate. All optional; change it later in Settings > Interview."
     : "Interview answers are built from your resume, so add it to continue. The rest is optional; change any of it later in Settings > Interview.";
-  $("obNext").disabled = needResume && !words;
-  $("obNext").title = $("obNext").disabled ? "Add your resume to continue" : "";
+  $("obNext").disabled = speechPending || (needResume && !words);
+  $("obNext").title = $("obNext").disabled ? (speechPending ? "Wait for the speech model to download" : "Add your resume to continue") : "";
   $("obCloak").setAttribute("aria-checked", String(!!onboarding.hide));
   $("obListenKey").textContent = plainKeys(state.shortcuts?.listen || "");
   $("obAskKey").textContent = plainKeys(state.shortcuts?.ask || "");
 }
 const resumeRequired = () => onboarding?.use !== "meetings";
 const resumeMissing = () => state.style === "interview" && !state.resume?.trim();
-// Skip setup leaves only once a resume is saved, or for meetings.
-const canSkipSetup = () => !resumeRequired() || !!state.resume?.trim();
+// Skip setup leaves only once the speech model is ready and a resume is saved, or for meetings.
+const canSkipSetup = () => state.speech?.status === "ready" && (!resumeRequired() || !!state.resume?.trim());
 // Saves what the current step collected, then moves on.
 function saveStep() {
   const { step } = onboarding;
@@ -1211,6 +1212,7 @@ function finishOnboarding() {
   $("question").focus();
 }
 $("obNext").addEventListener("click", () => {
+  if (onboarding.step === "speech" && state.speech?.status !== "ready") return;
   if (onboarding.step === "about" && resumeRequired() && !$("obResume").value.trim()) return $("obResume").focus();
   saveStep();
   if (onboarding.step === "ready") return finishOnboarding();

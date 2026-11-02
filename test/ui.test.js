@@ -155,18 +155,26 @@ test("first launch: welcome, about you, job description, ready", { skip }, async
   assert.ok(await shown("modePick"));
 });
 
-test("setup: a missing speech model gets a step with progress, Continue, and Try again", { skip }, async () => {
+test("setup: a missing speech model gets a compulsory step with progress and Try again", { skip }, async () => {
   await run(`state.onboarded = false; state.speech = { status: "downloading", model: "small.en", received: 123000000, total: 488000000, error: null };
     onboarding = { step: "welcome", needsKey: false, needsModel: true, use: "interviews", hide: false }; render();`);
+  // Skip setup can't leave setup on any step while the model downloads.
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
+  await run(`document.getElementById("onboardSkip").click();`);
+  assert.equal(await run(`return onboarding.step;`), "welcome");
   await click("#obNext");
   assert.equal(await run(`return onboarding.step;`), "speech");
   assert.equal(await run(`return document.querySelector('#onboard [data-step="speech"] .ob-title').textContent;`), "Download the speech model");
+  assert.match(await run(`return document.querySelector('#onboard [data-step="speech"] .ob-lead').textContent;`), /Glance needs this to transcribe calls\. This one-time download is about 490 MB\./);
   assert.equal(await run(`return document.getElementById("obSpeechMeta").textContent;`), "123 of 488 MB");
   assert.equal(await run(`return document.getElementById("obNext").textContent;`), "Continue");
   assert.match(await run(`return document.getElementById("obSpeechFill").style.width;`), /25/);
-  // Continue lets the user finish setup while the download carries on.
+  // Continue and Skip setup do nothing until the model is installed.
+  assert.ok(await run(`return document.getElementById("obNext").disabled;`), "Continue is disabled during the download");
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
   await click("#obNext");
-  assert.equal(await run(`return onboarding.step;`), "about");
+  await run(`document.getElementById("onboardSkip").click();`);
+  assert.equal(await run(`return onboarding.step;`), "speech");
 
   // Ready moves on by itself.
   await run(`onboarding.step = "speech"; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
@@ -176,6 +184,7 @@ test("setup: a missing speech model gets a step with progress, Continue, and Try
   await run(`onboarding.step = "speech"; state.speech = { status: "error", model: "small.en", received: 1000, total: 488000000, error: "No connection." }; render();`);
   assert.ok(await shown("obSpeechError"));
   assert.equal(await run(`return document.getElementById("obSpeechError").textContent;`), "No connection.");
+  assert.ok(await run(`return document.getElementById("obNext").disabled;`), "a failed download can't be skipped");
   await run(`window.__retried = false; requestSpeechDownload = () => { window.__retried = true; };`);
   await click("#obSpeechRetry");
   assert.equal(await run(`return window.__retried;`), true);
@@ -191,12 +200,17 @@ test("setup: an installed speech model means no speech step", { skip }, async ()
   await run(`onboarding = null; state.onboarded = true; render();`);
 });
 
-test("setup: a returning user's speech step closes setup on Continue", { skip }, async () => {
+test("setup: a returning user's speech step closes setup once the model is ready", { skip }, async () => {
   await run(`state.onboarded = true; state.style = "brief"; state.resume = "Jane Doe, engineer";
     state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
     startOnboarding("speech"); render();`);
   assert.equal(await run(`return onboarding.step;`), "speech");
+  assert.ok(await run(`return document.getElementById("obNext").disabled;`));
+  assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
   await click("#obNext");
+  assert.equal(await run(`return onboarding.step;`), "speech", "Continue waits for the model");
+  // Ready closes setup on its own for a returning user.
+  await run(`state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
   await until(`onboarding === null`);
   assert.equal(await run(`return state.onboarded;`), true);
 
@@ -204,8 +218,11 @@ test("setup: a returning user's speech step closes setup on Continue", { skip },
   await run(`state.onboarded = true; state.style = "interview"; state.resume = "";
     state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
     startOnboarding("speech"); render();`);
+  assert.equal(await run(`return onboarding.step;`), "speech");
   await click("#obNext");
-  assert.equal(await run(`return onboarding.step;`), "about");
+  assert.equal(await run(`return onboarding.step;`), "speech");
+  await run(`state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  await until(`onboarding?.step === "about"`);
   assert.ok(await shown("obResume"));
   await run(`onboarding = null;
     await g.setSetting("resume", "Jane Doe, engineer");
@@ -229,6 +246,7 @@ test("setup: a speech step that finished by itself doesn't bounce when you go Ba
   assert.equal(await run(`return onboarding.step;`), "speech");
   assert.ok(await shown("obSpeechDone"));
   assert.equal(await run(`return document.getElementById("obNext").textContent;`), "Continue");
+  assert.ok(!(await run(`return document.getElementById("obNext").disabled;`)), "an installed model enables Continue");
   await click("#obNext");
   assert.equal(await run(`return onboarding.step;`), "about");
   await run(`onboarding = null; state.onboarded = true; state.style = "brief"; await g.setSetting("setupActive", false); render();`);
