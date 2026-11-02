@@ -178,6 +178,7 @@ function renderMenu() {
   $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${state.keyFromEnv}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
+  for (const b of $("theme").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.theme));
   const speech = state.speech || {};
   const fastModel = state.transcription === "fast" && speech.model === "base.en" && speech.status !== "ready";
   $("fastModelStatus").hidden = !fastModel;
@@ -805,6 +806,10 @@ $("effort").addEventListener("click", (e) => {
 $("transcription").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (v) g.setSetting("transcription", v);
+});
+$("theme").addEventListener("click", (e) => {
+  const v = e.target.closest("button")?.dataset.value;
+  if (v) g.setSetting("theme", v);
 });
 // Saves when you leave the field or press Return.
 $("vocabularyInput").addEventListener("change", () => g.setSetting("vocabulary", $("vocabularyInput").value.trim()));

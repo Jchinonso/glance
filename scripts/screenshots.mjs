@@ -3,12 +3,13 @@
 // OpenAI-compatible model, walks through the main screens and captures each.
 //   node scripts/screenshots.mjs
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import electronPath from "electron";
+import { MODELS } from "../src/models.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "docs", "images");
@@ -55,8 +56,13 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 
 const dir = mkdtempSync(path.join(os.tmpdir(), "glance-shots-"));
 writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: `http://127.0.0.1:${server.address().port}/v1`, openaiModel: "gpt-4o", autoScreen: false, style: "interview", invisible: true, resume: RESUME, jobDescription: JOB, profileName: "Jane Doe", notice: "4 weeks" }));
+// The speech model is already installed, so setup goes straight past its step.
+mkdirSync(path.join(dir, "models"), { recursive: true });
+const modelFile = path.join(dir, "models", MODELS["small.en"].file);
+writeFileSync(modelFile, "");
+truncateSync(modelFile, MODELS["small.en"].size);
 const port = 9900 + Math.floor(Math.random() * 90);
-const app = spawn(electronPath, [root, `--remote-debugging-port=${port}`], { env: { ...process.env, GLANCE_TEST_DIR: dir, ANTHROPIC_API_KEY: "sk-ant-placeholder-1234" }, stdio: "ignore" });
+const app = spawn(electronPath, [root, `--remote-debugging-port=${port}`, "--force-device-scale-factor=2"], { env: { ...process.env, GLANCE_TEST_DIR: dir, ANTHROPIC_API_KEY: "sk-ant-placeholder-1234" }, stdio: "ignore" });
 
 let page;
 for (let i = 0; i < 100 && !page; i++) {
@@ -122,6 +128,8 @@ await shot("settings-interview");
 // Shown with Anthropic selected (placeholder key; nothing is sent).
 await run(`await g.setSetting("provider", "anthropic"); await g.setSetting("model", "claude-sonnet-5-5"); document.querySelector('#settingsTabs [data-tab="answers"]').click();`);
 await shot("settings-answers");
+await run(`document.querySelector('#settingsTabs [data-tab="general"]').click(); document.getElementById("stage").scrollTop = 0;`);
+await shot("settings-general");
 await run(`setMenu(false);`);
 
 await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
@@ -129,5 +137,66 @@ await shot("light-mode");
 
 ws.close();
 await new Promise((r) => (app.once("exit", r), app.kill()));
-server.close();
 rmSync(dir, { recursive: true, force: true });
+
+// The speech model step, part-way through: a separate run with no model, and a
+// local server that sends about 40% of the file and then holds the connection.
+const speechDir = mkdtempSync(path.join(os.tmpdir(), "glance-shots-speech-"));
+writeFileSync(path.join(speechDir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: `http://127.0.0.1:${server.address().port}/v1`, openaiModel: "gpt-4o", autoScreen: false, style: "interview", invisible: true, resume: RESUME, jobDescription: JOB, profileName: "Jane Doe", notice: "4 weeks" }));
+const modelSize = MODELS["small.en"].size;
+const holdAfter = Math.floor(modelSize * 0.4);
+const held = [];
+const modelServer = http.createServer((req, res) => {
+  req.resume();
+  req.on("end", async () => {
+    res.on("error", () => {});
+    res.writeHead(200, { "content-type": "application/octet-stream" });
+    held.push(res);
+    const chunk = Buffer.alloc(1_000_000);
+    let sent = 0;
+    while (sent < holdAfter && !res.destroyed) {
+      const n = Math.min(chunk.length, holdAfter - sent);
+      if (!res.write(chunk.subarray(0, n))) await new Promise((r) => res.once("drain", r));
+      sent += n;
+      await sleep(8);
+    }
+    // Hold the connection open so the progress bar stays part-way.
+  });
+});
+await new Promise((r) => modelServer.listen(0, "127.0.0.1", r));
+const speechPort = 9900 + Math.floor(Math.random() * 90);
+const speechApp = spawn(electronPath, [root, `--remote-debugging-port=${speechPort}`, "--force-device-scale-factor=2"], { env: { ...process.env, GLANCE_TEST_DIR: speechDir, GLANCE_MODELS_URL: `http://127.0.0.1:${modelServer.address().port}`, ANTHROPIC_API_KEY: "sk-ant-placeholder-1234" }, stdio: "ignore" });
+
+let speechPage;
+for (let i = 0; i < 100 && !speechPage; i++) {
+  await sleep(100);
+  try {
+    speechPage = (await (await fetch(`http://127.0.0.1:${speechPort}/json`)).json()).find((t) => t.type === "page");
+  } catch {}
+}
+const speechWs = new WebSocket(speechPage.webSocketDebuggerUrl);
+let speechId = 0;
+const speechWaiting = new Map();
+speechWs.onmessage = (m) => {
+  const d = JSON.parse(m.data);
+  speechWaiting.get(d.id)?.(d);
+};
+await new Promise((r) => (speechWs.onopen = r));
+const speechCdp = (method, params = {}) => new Promise((r) => { const i = ++speechId; speechWaiting.set(i, r); speechWs.send(JSON.stringify({ id: i, method, params })); });
+const speechRun = async (js) => (await speechCdp("Runtime.evaluate", { expression: `(async () => { ${js} })()`, awaitPromise: true, returnByValue: true })).result?.result?.value;
+const speechUntil = async (js) => { for (let i = 0; i < 100 && !(await speechRun(`return !!(${js});`)); i++) await sleep(50); };
+
+await speechUntil(`typeof state !== "undefined" && state.shortcuts`);
+await speechRun(`document.getElementById("obNext").click();`);
+await speechUntil(`onboarding?.step === "speech" && state.speech?.received > 0`);
+await sleep(500);
+const { result: speechResult } = await speechCdp("Page.captureScreenshot", { format: "png" });
+writeFileSync(path.join(out, "setup-speech.png"), Buffer.from(speechResult.data, "base64"));
+console.log("docs/images/setup-speech.png");
+
+speechWs.close();
+await new Promise((r) => (speechApp.once("exit", r), speechApp.kill()));
+for (const res of held) res.destroy();
+modelServer.close();
+server.close();
+rmSync(speechDir, { recursive: true, force: true });

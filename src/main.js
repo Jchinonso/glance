@@ -50,7 +50,7 @@ const INTERVIEW_PREVIOUS_LIMIT = 8;
 
 // provider: which LLM answers (see providers.js). model is the Anthropic model;
 // an OpenAI-compatible server uses openaiBaseUrl and openaiModel instead.
-const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openaiBaseUrl: "https://api.openai.com/v1", openaiModel: "", effort: "low", invisible: true, autoScreen: true, style: "interview", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", vocabulary: "", resume: "", jobDescription: "",
+const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openaiBaseUrl: "https://api.openai.com/v1", openaiModel: "", effort: "low", invisible: true, autoScreen: true, style: "interview", theme: "system", customInstructions: "", compressedInstructions: "", shortcuts: null, transcription: "accurate", vocabulary: "", resume: "", jobDescription: "",
   // Setup: onboarded once the welcome and setup steps are done or skipped.
   // Your details go with every question like the resume. jdCheckedAt: when the
   // job description was last confirmed for an interview (ms; 0 = ask again).
@@ -273,6 +273,8 @@ function loadConfig() {
   }
   config = { ...defaults, ...settings, apiKey: readKeychainKey(), openaiKey: readKeychainKey(KEYCHAIN.accounts.openai) };
   if (!(config.provider in PROVIDERS)) config.provider = "anthropic";
+  if (!["system", "light", "dark"].includes(config.theme)) config.theme = "system";
+  nativeTheme.themeSource = config.theme;
   // Upgraded: save now, so the migrations don't run again.
   if (Object.keys(raw).length && configVersion < CONFIG_MIGRATIONS.length) saveConfig();
   // Migrate a key saved by older builds, if this build can still decrypt it.
@@ -336,6 +338,7 @@ function state() {
     keyOptional: config.provider === "openai" && isLocalUrl(config.openaiBaseUrl),
     effort: config.effort,
     style: config.style,
+    theme: config.theme,
     customInstructions: config.customInstructions,
     compressedInstructions: config.compressedInstructions,
     sentInstructions: sentInstructions(),
@@ -1035,6 +1038,10 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   else if (name === "compactAnswers") config.compactAnswers = !!value;
   else if (name === "autoAnswer") config.autoAnswer = !!value;
   else if (name === "style" && ["brief", "natural", "interview"].includes(value)) config.style = value;
+  else if (name === "theme" && ["system", "light", "dark"].includes(value)) {
+    config.theme = value;
+    nativeTheme.themeSource = value;
+  }
   else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
     config.transcription = value;
     if (value === "fast" && !installedModel("base.en")) startModelDownload("base.en");

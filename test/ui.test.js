@@ -301,6 +301,23 @@ test("settings: every tab, and each form goes back to the tab it came from", { s
   assert.equal(await run(`return panel;`), null);
 });
 
+test("Appearance setting: Light then Dark updates the setting and aria-checked", { skip }, async () => {
+  await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="general"]').click(); render();`);
+  assert.ok(await shown("menu"));
+  const checked = () => run(`return [...document.querySelectorAll("#theme button")].map((b) => [b.dataset.value, b.getAttribute("aria-checked")]);`);
+  assert.deepEqual(await checked(), [["system", "true"], ["light", "false"], ["dark", "false"]]);
+  await click('#theme [data-value="light"]');
+  await until(`state.theme === "light"`);
+  assert.deepEqual(await checked(), [["system", "false"], ["light", "true"], ["dark", "false"]]);
+  assert.equal(await run(`return (await g.getState()).theme;`), "light");
+  await click('#theme [data-value="dark"]');
+  await until(`state.theme === "dark"`);
+  assert.deepEqual(await checked(), [["system", "false"], ["light", "false"], ["dark", "true"]]);
+  assert.equal(await run(`return (await g.getState()).theme;`), "dark");
+  await run(`await g.setSetting("theme", "system"); setMenu(false);`);
+  await until(`state.theme === "system"`);
+});
+
 test("mode menu switches Interview and Meeting", { skip }, async () => {
   await click("#modeBtn");
   assert.ok(await shown("modeMenu"));

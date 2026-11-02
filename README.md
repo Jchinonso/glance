@@ -35,7 +35,7 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 - **Sees your screen.** Screenshot a coding problem, an error or a shared doc and get an answer (⌘⇧2).
 - **Any model.** Anthropic (Opus, Sonnet, Haiku) or any OpenAI-compatible API: OpenAI, Google Gemini, OpenRouter, Groq, Mistral, or a local Ollama or LM Studio.
 - **Meeting notes.** Save a Markdown summary with decisions, action items, the transcript and every question asked.
-- **Stays out of the way.** A small always-on-top panel that sizes itself to its content, can hide from screen sharing, and follows macOS light and dark mode.
+- **Stays out of the way.** A small always-on-top panel that sizes itself to its content, can hide from screen sharing, and follows macOS light and dark mode, or you can set it to light or dark in **Settings › General › Appearance**.
 
 ## Screenshots
 
@@ -43,6 +43,8 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 | --- | --- |
 | ![Welcome screen](docs/images/welcome.png) | ![Setup: about you, with résumé and details](docs/images/setup-about.png) |
 | **First launch.** A short setup, then the speech model download. | **About you.** Your résumé and details, imported or pasted. |
+| ![Speech model download](docs/images/setup-speech.png) | ![Settings, General tab](docs/images/settings-general.png) |
+| **Speech model.** Downloaded once on first launch. | **Settings › General.** Transcription, appearance, shortcuts. |
 | ![New interview prompt](docs/images/new-interview.png) | ![Answer as key points](docs/images/key-points.png) |
 | **Each new interview.** Keep the same role or add its job description. | **Key points.** The opening line and the beats of the answer. |
 | ![Meeting or Interview menu](docs/images/mode-menu.png) | ![Light mode](docs/images/light-mode.png) |
@@ -128,7 +130,7 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 - **Answers:** AI provider and key, model (Opus, Sonnet or Haiku on Anthropic), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
 - **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
 - **Session:** spending so far, the transcript, Save notes, Clear session.
-- **General:** Transcription (Accurate or Fast), words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
+- **General:** Transcription (Accurate or Fast), Appearance (System, Light, Dark), words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
 
 **Transcription.** Under **Settings › General › Transcription**, **Accurate** (the default) uses small.en (488 MB): much better with technical terms, accents, noise and quiet speakers, and still faster than real time on Apple Silicon. **Fast** uses base.en (148 MB), about twice as quick per piece but makes more mistakes. It is downloaded only the first time Fast is picked; Accurate is used until it's ready. Accurate is recommended for interviews: a misheard question can't be answered well.
 
