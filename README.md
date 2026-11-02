@@ -13,17 +13,17 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 - [Screenshots](#screenshots)
 - [Download](#download)
 - [Requirements](#requirements)
-- [Build from source](#build-from-source)
 - [Using Glance](#using-glance)
 - [Interview mode](#interview-mode)
 - [Settings](#settings)
 - [AI providers](#ai-providers)
+- [Troubleshooting](#troubleshooting)
 - [Privacy and data](#privacy-and-data)
 - [Screen sharing: what hiding does and doesn't do](#screen-sharing-what-hiding-does-and-doesnt-do)
-- [How it works](#how-it-works)
-- [Development](#development)
-- [Troubleshooting](#troubleshooting)
 - [Uninstall](#uninstall)
+- [How it works](#how-it-works)
+- [Build from source](#build-from-source)
+- [Development](#development)
 
 ## Features
 
@@ -42,7 +42,7 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 | | |
 | --- | --- |
 | ![Welcome screen](docs/images/welcome.png) | ![Setup: about you, with résumé and details](docs/images/setup-about.png) |
-| **First launch.** A one-minute setup. | **About you.** Your résumé and details, imported or pasted. |
+| **First launch.** A short setup, then the speech model download. | **About you.** Your résumé and details, imported or pasted. |
 | ![New interview prompt](docs/images/new-interview.png) | ![Answer as key points](docs/images/key-points.png) |
 | **Each new interview.** Keep the same role or add its job description. | **Key points.** The opening line and the beats of the answer. |
 | ![Meeting or Interview menu](docs/images/mode-menu.png) | ![Light mode](docs/images/light-mode.png) |
@@ -54,18 +54,172 @@ The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated
 
 ## Download
 
+> **Glance downloads its speech model the first time it opens.** You need an internet connection for that first launch.
+
+- The DMG is about 95 MB.
+- The model (small.en, about 490 MB) comes from [Hugging Face's whisper.cpp repo](https://huggingface.co/ggerganov/whisper.cpp) into `~/Library/Application Support/Glance/models`.
+- Setup starts with a required **Download the speech model** step: **Continue** and **Skip setup** stay disabled until it finishes.
+- The download resumes after a dropped connection, is checked against its SHA-256, and offers **Try again** if it keeps failing.
+- If the model is already installed, nothing downloads; people updating from an earlier version see only this step, once.
+
 1. Download the latest **Glance-…-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
 2. Open it and drag **Glance** onto **Applications**.
 3. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
-4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance). The first launch also downloads the speech model once, about 490 MB, from [Hugging Face's whisper.cpp repo](https://huggingface.co/ggerganov/whisper.cpp) into `~/Library/Application Support/Glance/models`.
+4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
 
-Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration through Metal) is inside the app, which is why the download is about 100 MB. The speech model downloads on first launch instead of shipping inside the app, so setup can take a few minutes on a slow connection. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
+Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration through Metal) is inside the app. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
 
 ## Requirements
 
 - A Mac with Apple Silicon (the build targets `darwin-arm64`).
+- An internet connection on first launch, for the speech model download (about 490 MB).
 - To build from source: [Homebrew](https://brew.sh) and Node.js 20 or later. The downloaded app needs neither.
 - An API key for Anthropic or an OpenAI-compatible service, or a local model server (Ollama, LM Studio) that needs no key.
+
+## Using Glance
+
+### First launch
+
+On first launch Glance walks you through setup: the speech model download, an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. You can change everything later in Settings.
+
+macOS asks for **Screen & System Audio Recording** permission the first time you listen or take a screenshot. Allow it, then reopen Glance once: macOS only sends audio to an app after it reopens. macOS remembers the permission, so this happens only once.
+
+### Listening and answering
+
+1. When the call starts, press **Listen** (⌘⇧\\). The timer shows how long Glance has been listening.
+2. When the other side asks a question, it appears under the bar with a **Question** tag.
+3. Press **Answer** (⌘↵), or in Interview mode wait a moment: Glance answers on its own once they finish.
+4. Type your own question in the box at any time, or take a screenshot (⌘⇧2) to ask about what's on screen.
+
+| Default shortcut | Action |
+| --- | --- |
+| ⌘⇧\\ | Start or stop listening |
+| ⌘↵ | Answer the question just heard, or what you've typed |
+| ⌘⇧2 | Screenshot and answer |
+| ⌘⇧1 | Add a screenshot without asking (collect several first) |
+| ⌘\\ | Show or hide Glance |
+| ⌘⇧H | Hide from screen sharing (on or off) |
+| ⌘ + arrows | Move the window |
+
+Shortcuts work from any app and can be changed in **Settings › General › Shortcuts**. The menu bar icon shows or hides the window; right-click it for more. Esc closes whatever panel is open.
+
+Answers stay at the top while they stream in. Older answers stay in the pager (‹ 1 of 3 ›). An answer cut short by **Stop**, a new question or a typed one is marked "Stopped before the end". Each answer shows its estimated cost.
+
+### Notes
+
+**Settings › Session › Save notes** writes a Markdown file to `~/Documents/Glance/` with a summary, decisions, action items, the transcript and every question and answer.
+
+## Interview mode
+
+Glance starts in Interview mode. Switch with the mode menu beside the question box (or **Settings › Interview › Interview mode**); **Meeting** gives Brief or Natural answers about the call and your screen. Auto-answer and the interview prompts below work only in Interview mode.
+
+- **Your résumé and the job description.** Import a PDF, Word, RTF or text file, or paste. Both are sent word for word with every question (up to 20,000 characters each), never compressed, so answers can use your own phrasing. Check imported PDF text: PDFs can merge lines or drop bullets.
+- **Your details.** Name, salary expectation, visa status and notice period, used when an interviewer asks.
+- **Answers.** First person, spoken prose: a bold opening line, two to four short paragraphs, then an optional note. Stories come from your real roles and projects; added specifics stay modest and are listed in the note. Glance answers honestly when you lack an experience, and never volunteers salary, visa or weaknesses unless asked. Technical, behavioral, system design, coding, HR, case and product questions each get a fitting shape.
+- **Auto-answer.** While listening, Glance answers a heard question once the other side goes quiet. Questions are recognized without a question mark from how sentences start ("can you", "walk me through", "let's talk about", "help me understand", "what if", and others), including a question in the middle of a line. A follow-up comment from the interviewer within 10 seconds doesn't cancel the question. Auto-answer waits only while you're typing (the last 5 s), while an answer you asked for is still streaming, or while a form or Settings is open (the transcript view doesn't hold it). It never interrupts an answer you asked for or a question you're typing, and if the interviewer carries on after a long pause, the whole question is answered again. Turn it off in **Settings › Interview › Answer heard questions automatically**.
+- **Key points.** **Key points** on an answer shows the opening line and 3 or 4 phrases; **Full answer** shows the rest. To open every answer that way, turn on **Settings › Interview › Open answers as key points**.
+- **I said something else.** Type what you actually said under an answer; later questions build on that, not the suggestion.
+- **New interview?** When you start listening in Interview mode, Glance asks whether it's the same role or a new job description (again after 30 minutes, or after Clear session). If no résumé is saved, it asks for that first.
+
+## Settings
+
+The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**). Panels opened from Settings have a Back button that returns to the same tab.
+
+- **Answers:** AI provider and key, model (Opus, Sonnet or Haiku on Anthropic), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
+- **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
+- **Session:** spending so far, the transcript, Save notes, Clear session.
+- **General:** Transcription (Accurate or Fast), words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
+
+**Transcription.** Under **Settings › General › Transcription**, **Accurate** (the default) uses small.en (488 MB): much better with technical terms, accents, noise and quiet speakers, and still faster than real time on Apple Silicon. **Fast** uses base.en (148 MB), about twice as quick per piece but makes more mistakes. It is downloaded only the first time Fast is picked; Accurate is used until it's ready. Accurate is recommended for interviews: a misheard question can't be answered well.
+
+**Depth.** **Settings › Answers › Depth** has three settings. **Quick** starts answers soonest and is recommended for live calls. **Balanced** and **Thorough** let the model think first, adding seconds before the first word.
+
+## AI providers
+
+| Provider | Setup | Cost shown |
+| --- | --- | --- |
+| Anthropic | API key from [console.anthropic.com](https://console.anthropic.com) | Yes, at list prices |
+| OpenAI, Gemini, OpenRouter, Groq, Mistral… | Base URL, model name and API key | Tokens only |
+| Ollama or LM Studio (local) | Base URL such as `http://localhost:11434/v1` and model name; no key | Tokens only |
+
+On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
+
+## Troubleshooting
+
+- **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
+- **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package`.
+- **Answers are slow.** Set Settings › Answers › Depth to **Quick** (Balanced and Thorough think before answering); keep Settings › General › Transcription on Accurate unless the log shows transcription is the bottleneck; see Logs below.
+- **A question gets no answer.** Auto-answer waits while you're typing, while an answer you asked for is still streaming, or while a form or Settings is open; questions are recognized from how they're phrased, so an unusual phrasing can be missed: press **Answer** (⌘↵) to answer the latest one, and check the log for a heard line with no "question detected" after it.
+- **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Transcription for the Fast model). It resumes from where it stopped. Glance retries 3 times on its own before showing **Try again**.
+- **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
+- **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
+- **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
+- **Logs.** `~/Library/Logs/Glance/glance.log` records what happens in a session. It stays on your Mac and includes the first 80 characters of what was said.
+  - **What it records:** each heard line (speech length, `transcribeMs`, `waitMs`, `queued`, and whether it came via the server or the CLI), question detected / extended / replaced / dropped, auto-answer fired, and each answer (`sinceSpeechEndMs`, model, effort, first-token ms, total ms).
+  - **How to read it:**
+    - Slow transcription: a long `transcribeMs` or a growing `queued` count means transcription is the bottleneck.
+    - Slow first token: a long first token points to Depth or the model.
+    - Missed question: a heard line with no "question detected" after it.
+
+## Privacy and data
+
+- **Audio stays on your Mac.** Transcription runs locally with Whisper. Only text (and screenshots you take or allow) is sent to your AI provider.
+- **The microphone is never recorded.** Glance hears only the Mac's audio, the other side of the call.
+- **Keys** are stored in the macOS login keychain, not in files.
+- **Where things live.** Settings are in `~/Library/Application Support/glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
+- Glance treats the transcript, screen text, résumé and job description as data, not instructions.
+- **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
+
+## Screen sharing: what hiding does and doesn't do
+
+With **Hide from screen sharing** on (the eye icon, ⌘⇧H), macOS leaves Glance out of screen captures and recordings, including Zoom, Meet and Teams screen shares. Glance keeps itself out of its own screenshots either way.
+
+It does **not** hide Glance from a camera pointed at your screen, from interview tools that lock down the browser or watch the camera, or from an interviewer noticing you reading. Many companies don't allow outside help during interviews; check the rules before you use it.
+
+## Uninstall
+
+Dragging an app to the Trash doesn't tell it anything, so on macOS an app's keys and settings stay behind unless you remove them. Glance keeps your API keys and résumé, so remove them first:
+
+1. Open Glance, then **Settings › General › Delete all Glance data**. It lists what it removes and asks you to confirm:
+   - your API keys, from the macOS keychain;
+   - settings, résumé, job description and your details (`~/Library/Application Support/Glance`);
+   - the downloaded speech models (`~/Library/Application Support/Glance/models`);
+   - logs (`~/Library/Logs/Glance`);
+   - optionally, your saved meeting notes (`~/Documents/Glance`), moved to the Trash.
+
+   Glance then quits.
+2. Drag **Glance** from Applications to the Trash.
+3. Optional: remove Glance from **System Settings › Privacy & Security › Screen & System Audio Recording**.
+
+Already deleted the app? Remove the leftovers by hand:
+
+```sh
+security delete-generic-password -s com.glance.overlay.api-key -a glance   # Anthropic key
+security delete-generic-password -s com.glance.overlay.api-key -a openai   # OpenAI-compatible key, if set
+rm -rf ~/Library/Application\ Support/Glance ~/Library/Logs/Glance   # includes the speech models
+# Saved notes, if you don't want them: ~/Documents/Glance
+```
+
+## How it works
+
+```
+Mac audio ──► speech detection ──► Whisper (whisper-server, kept loaded) ──► transcript
+                                                                               │
+                                     question detection (joins split pieces) ◄─┘
+                                                  │
+  résumé, job description, details, screenshots ──┼──► prompt ──► AI provider ──► streamed answer
+                                                  │
+                         earlier answers (or what you said instead)
+```
+
+- `src/main.js`: window, shortcuts, screenshots, keychain, settings, notes, logging, the test mode.
+- `src/audio.js`: system audio capture (audiotee), speech detection, Whisper transcription. `whisper-server` keeps the model loaded and restarts if it dies. The app runs its own bundled copy of whisper.cpp, falling back to Homebrew's (for `npm run dev`).
+- `scripts/bundle-whisper.sh`: copies `whisper-server`, `whisper-cli`, their libraries and ggml's compute backends (Metal, CPU, BLAS) from Homebrew into `vendor/whisper`, rewrites their library paths to stay inside the app, and signs them. Licenses are included in `vendor/whisper/licenses`.
+- `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
+- `src/providers.js`: Anthropic and OpenAI-compatible adapters behind one interface. Adding a provider means adding one adapter.
+- `src/compress.js`: mechanical compression of the transcript and earlier answers sent with every question; numbers, code, quotes and negations are never touched.
+- `src/resume.js`: résumé and job description import (PDFKit and `textutil`, built into macOS).
+- `src/ui/`: the interface. `app.js` (window logic), `questions.js` (question detection and joining), `markdown.js` and `highlight.js` (answer rendering), `onboarding.js`, `hints.js`.
 
 ## Build from source
 
@@ -89,103 +243,9 @@ npm start   # opens dist/Glance-darwin-arm64/Glance.app
 npm run dmg
 ```
 
-On first launch Glance walks you through setup: the speech model download, an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. Everything can be changed later in Settings.
-
-A `models/` folder in the checkout is still used by `npm run dev` when present, but it is no longer packed into the app: packaged builds download the speech model on first launch.
-
-macOS asks for **Screen & System Audio Recording** permission the first time you listen or take a screenshot. Allow it, then reopen Glance once: macOS only sends audio to an app after it reopens. macOS remembers the permission, so this happens only once.
+A `models/` folder in the checkout is optional: `npm run dev` uses it when present, and otherwise downloads the model into `~/Library/Application Support/Glance/models` like the app. `npm run package` and `npm run dmg` no longer pack `models/` (top-level dot files are excluded too). The DMG is LZMA-compressed and takes about 4 minutes to build.
 
 `npm run dev` runs from source, but macOS won't grant it screen recording, so screenshots only work in the packaged app. Quit Glance before running `npm run package` again.
-
-## Using Glance
-
-1. When the call starts, press **Listen** (⌘⇧\\). The timer shows how long Glance has been listening.
-2. When the other side asks a question, it appears under the bar with a **Question** tag.
-3. Press **Answer** (⌘↵), or in Interview mode wait a moment: Glance answers on its own once they finish.
-4. Type your own question in the box at any time, or take a screenshot (⌘⇧2) to ask about what's on screen.
-
-| Default shortcut | Action |
-| --- | --- |
-| ⌘⇧\\ | Start or stop listening |
-| ⌘↵ | Answer the question just heard, or what you've typed |
-| ⌘⇧2 | Screenshot and answer |
-| ⌘⇧1 | Add a screenshot without asking (collect several first) |
-| ⌘\\ | Show or hide Glance |
-| ⌘⇧H | Hide from screen sharing (on or off) |
-| ⌘ + arrows | Move the window |
-
-Shortcuts work from any app and can be changed in **Settings › General › Shortcuts**. The menu bar icon shows or hides the window; right-click it for more. Esc closes whatever panel is open.
-
-Answers stay at the top while they stream in. Older answers stay in the pager (‹ 1 of 3 ›). An answer cut short by **Stop**, a new question or a typed one is marked "Stopped before the end". Each answer shows its estimated cost.
-
-**Notes.** **Settings › Session › Save notes** writes a Markdown file to `~/Documents/Glance/` with a summary, decisions, action items, the transcript and every question and answer.
-
-## Interview mode
-
-Glance starts in Interview mode. Switch with the mode menu beside the question box (or **Settings › Interview › Interview mode**); **Meeting** gives Brief or Natural answers about the call and your screen. Auto-answer and the interview prompts below work only in Interview mode.
-
-- **Your résumé and the job description.** Import a PDF, Word, RTF or text file, or paste. Both are sent word for word with every question (up to 20,000 characters each), never compressed, so answers can use your own phrasing. Check imported PDF text: PDFs can merge lines or drop bullets.
-- **Your details.** Name, salary expectation, visa status and notice period, used when an interviewer asks.
-- **Answers.** First person, spoken prose: a bold opening line, two to four short paragraphs, then an optional note. Stories come from your real roles and projects; added specifics stay modest and are listed in the note. Glance answers honestly when you lack an experience, and never volunteers salary, visa or weaknesses unless asked. Technical, behavioral, system design, coding, HR, case and product questions each get a fitting shape.
-- **Auto-answer.** While listening, Glance answers a heard question as soon as the interviewer finishes. It never interrupts an answer you asked for or a question you're typing, and if the interviewer carries on after a long pause, the whole question is answered again. Turn it off in **Settings › Interview › Answer heard questions automatically**.
-- **Key points.** **Key points** on an answer shows the opening line and 3 or 4 phrases; **Full answer** shows the rest. To open every answer that way, turn on **Settings › Interview › Open answers as key points**.
-- **I said something else.** Type what you actually said under an answer; later questions build on that, not the suggestion.
-- **New interview?** When you start listening in Interview mode, Glance asks whether it's the same role or a new job description (again after 30 minutes, or after Clear session). If no résumé is saved, it asks for that first.
-
-## Settings
-
-The gear opens four tabs. Panels opened from Settings have a Back button that returns to the same tab.
-
-- **Answers:** AI provider and key, model (Opus, Sonnet or Haiku on Anthropic), depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and whether typed questions include a screenshot.
-- **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
-- **Session:** spending so far, the transcript, Save notes, Clear session.
-- **General:** Accurate or Fast transcription, words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
-
-## AI providers
-
-| Provider | Setup | Cost shown |
-| --- | --- | --- |
-| Anthropic | API key from [console.anthropic.com](https://console.anthropic.com) | Yes, at list prices |
-| OpenAI, Gemini, OpenRouter, Groq, Mistral… | Base URL, model name and API key | Tokens only |
-| Ollama or LM Studio (local) | Base URL such as `http://localhost:11434/v1` and model name; no key | Tokens only |
-
-On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
-
-## Privacy and data
-
-- **Audio stays on your Mac.** Transcription runs locally with Whisper. Only text (and screenshots you take or allow) is sent to your AI provider.
-- **The microphone is never recorded.** Glance hears only the Mac's audio, the other side of the call.
-- **Keys** are stored in the macOS login keychain, not in files.
-- **Settings** live in `~/Library/Application Support/glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
-- Glance treats the transcript, screen text, résumé and job description as data, not instructions.
-- **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
-
-## Screen sharing: what hiding does and doesn't do
-
-With **Hide from screen sharing** on (the eye icon, ⌘⇧H), macOS leaves Glance out of screen captures and recordings, including Zoom, Meet and Teams screen shares. Glance keeps itself out of its own screenshots either way.
-
-It does **not** hide Glance from a camera pointed at your screen, from interview tools that lock down the browser or watch the camera, or from an interviewer noticing you reading. Many companies don't allow outside help during interviews; check the rules before you use it.
-
-## How it works
-
-```
-Mac audio ──► speech detection ──► Whisper (whisper-server, kept loaded) ──► transcript
-                                                                               │
-                                     question detection (joins split pieces) ◄─┘
-                                                  │
-  résumé, job description, details, screenshots ──┼──► prompt ──► AI provider ──► streamed answer
-                                                  │
-                         earlier answers (or what you said instead)
-```
-
-- `src/main.js`: window, shortcuts, screenshots, keychain, settings, notes, logging, the test mode.
-- `src/audio.js`: system audio capture (audiotee), speech detection, Whisper transcription. `whisper-server` keeps the model loaded and restarts if it dies. The app runs its own bundled copy of whisper.cpp, falling back to Homebrew's (for `npm run dev`).
-- `scripts/bundle-whisper.sh`: copies `whisper-server`, `whisper-cli`, their libraries and ggml's compute backends (Metal, CPU, BLAS) from Homebrew into `vendor/whisper`, rewrites their library paths to stay inside the app, and signs them. Licenses are included in `vendor/whisper/licenses`.
-- `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
-- `src/providers.js`: Anthropic and OpenAI-compatible adapters behind one interface. Adding a provider means adding one adapter.
-- `src/compress.js`: mechanical compression of the transcript and earlier answers sent with every question; numbers, code, quotes and negations are never touched.
-- `src/resume.js`: résumé and job description import (PDFKit and `textutil`, built into macOS).
-- `src/ui/`: the interface. `app.js` (window logic), `questions.js` (question detection and joining), `markdown.js` and `highlight.js` (answer rendering), `onboarding.js`, `hints.js`.
 
 ## Development
 
@@ -199,37 +259,3 @@ ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API
 - **UI tests** (`test/ui.test.js`) launch the real app in test mode and drive it over the DevTools protocol: setup, every Settings tab and form, the mode menu, answers, key points, "I said something else", stopping, waiting for a question to finish, and auto-answer. Test mode (`GLANCE_TEST_DIR=<folder>`) uses its own settings folder, never touches the keychain, registers no global shortcuts and keeps its window invisible. A fake OpenAI-compatible server answers.
 - **The interview eval** (`test/interview-eval.js`) asks 21 sample interview questions against a real model and checks shape, placeholders, labels, length, key phrases and consistency. `EVAL_ONLY="salary|visa"` runs a subset; `EVAL_PROVIDER=openai EVAL_BASE_URL=…` targets another vendor. Read the answers too: checks can't judge quality.
 - **Roadmap:** see [PLAN.md](PLAN.md).
-
-## Troubleshooting
-
-- **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
-- **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package`; the speech model is downloaded on first launch, or used from `models/` by `npm run dev`.
-- **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Transcription for the fast model). It resumes from where it stopped, and the automatic retries continue on their own.
-- **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
-- **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
-- **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
-
-## Uninstall
-
-Dragging an app to the Trash doesn't tell it anything, so on macOS an app's keys and settings stay behind unless you remove them. Glance keeps your API keys and résumé, so remove them first:
-
-1. Open Glance, then **Settings › General › Delete all Glance data**. It lists what it removes and asks you to confirm:
-   - your API keys, from the macOS keychain;
-   - settings, résumé, job description and your details (`~/Library/Application Support/Glance`);
-   - the downloaded speech models (`~/Library/Application Support/Glance/models`);
-   - logs (`~/Library/Logs/Glance`);
-   - optionally, your saved meeting notes (`~/Documents/Glance`), moved to the Trash.
-
-   Glance then quits.
-2. Drag **Glance** from Applications to the Trash.
-3. Optional: remove Glance from **System Settings › Privacy & Security › Screen & System Audio Recording**.
-
-Already deleted the app? Remove the leftovers by hand:
-
-```sh
-security delete-generic-password -s com.glance.overlay.api-key -a glance   # Anthropic key
-security delete-generic-password -s com.glance.overlay.api-key -a openai   # OpenAI-compatible key, if set
-rm -rf ~/Library/Application\ Support/Glance ~/Library/Logs/Glance
-# Saved notes, if you don't want them: ~/Documents/Glance
-```
-
