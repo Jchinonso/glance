@@ -24,6 +24,19 @@ export const MOST_CAPABLE_ANTHROPIC_MODEL = "claude-opus-5-5";
 
 const text = (blocks) => blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
 
+// Turns thinking off at Quick effort where the model allows it. Sonnet's only
+// way is "between_tools", which must be sent alone; Haiku takes "disabled".
+// Opus can't disable thinking, so it keeps the default (undefined = omit it).
+// think = true keeps thinking on (undefined = the API default): typed and
+// screen-related questions need the extra reasoning, heard ones often don't.
+export function thinkingFor(model, effort, think = false) {
+  if (think) return undefined;
+  if (effort !== "low") return undefined;
+  if (model === "claude-sonnet-5-5") return { type: "between_tools" };
+  if (model === "claude-haiku-5-5") return { type: "disabled" };
+  return undefined;
+}
+
 // anthropicBaseUrl: optional, for a proxy or gateway (and tests).
 function anthropic({ apiKey, anthropicBaseUrl }) {
   const client = new Anthropic({ ...(apiKey ? { apiKey } : {}), ...(anthropicBaseUrl ? { baseURL: anthropicBaseUrl, maxRetries: 0 } : {}) });
@@ -44,8 +57,9 @@ function anthropic({ apiKey, anthropicBaseUrl }) {
       const p = ANTHROPIC_MODELS[known(model)].price;
       return (u.input * p.input + u.output * p.output + u.cacheWrite * p.cacheWrite + u.cacheRead * p.cacheRead) / 1e6;
     },
-    stream({ model, system, parts, maxTokens, effort, onText }) {
+    stream({ model, system, parts, maxTokens, effort, think, onText }) {
       model = known(model);
+      const thinking = thinkingFor(model, effort, think);
       const content = parts.map((p) => (p.type === "image" ? { type: "image", source: { type: "base64", media_type: "image/jpeg", data: p.data } } : p));
       let current = null;
       let streamed = false;
@@ -57,9 +71,10 @@ function anthropic({ apiKey, anthropicBaseUrl }) {
           // Server-side fallback re-runs a refused request on another model.
           ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {}),
           output_config: { effort },
+          ...(thinking ? { thinking } : {}),
           // Identical across questions until a setting changes, so cached:
-          // repeats within 5 minutes pay 0.1x for this part.
-          system: [{ type: "text", text: system, cache_control: { type: "ephemeral" } }],
+          // 1-hour lifetime; repeats within an hour read it at 0.1x.
+          system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }],
           messages: [{ role: "user", content }],
         });
         current.on("text", (t) => {
@@ -83,6 +98,21 @@ function anthropic({ apiKey, anthropicBaseUrl }) {
       // streaming for long outputs.
       const msg = await client.messages.stream({ model: known(model), max_tokens: maxTokens, output_config: { effort }, system, messages: [{ role: "user", content: user }] }).finalMessage();
       return result(msg);
+    },
+    // Writes the system-prompt cache before a question is asked. Not streamed:
+    // max_tokens 0 is rejected with stream: true. There are no output tokens.
+    async prewarm({ model, system, effort }) {
+      model = known(model);
+      const thinking = thinkingFor(model, effort);
+      const msg = await client.messages.create({
+        model,
+        max_tokens: 0,
+        output_config: { effort },
+        ...(thinking ? { thinking } : {}),
+        system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }],
+        messages: [{ role: "user", content: "." }],
+      });
+      return usage(msg.usage);
     },
     describeError(e, model) {
       const name = `Claude ${ANTHROPIC_MODELS[known(model)].name}`;
@@ -199,6 +229,10 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
       const json = await res.json();
       const choice = json.choices?.[0];
       return { text: choice?.message?.content || "", usage: usage(json.usage), stop: stopOf(choice?.finish_reason), refusal: null };
+    },
+    // No cache to warm on this API.
+    async prewarm() {
+      return null;
     },
     describeError(e, model) {
       const host = (() => {

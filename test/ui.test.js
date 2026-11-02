@@ -499,6 +499,7 @@ test("auto-answer fires when text in the question box is stale", { skip }, async
   await run(`
     stillHearing = async () => false;
     pendingQuestion = null;
+    lastAutoQuestion = null;
     state.listening = true;
     view = "answers";
     const q = document.getElementById("question");
@@ -529,7 +530,7 @@ test("auto-answer: if they carry on after a long pause, the whole question is an
 test("⌘↵ doesn't stop an auto-answer already under way; Stop does; typing sends right away", { skip }, async () => {
   const now = Date.now();
   const count = await run(`return answers.length;`);
-  await run(`stillHearing = async () => false; state.listening = true; onTranscript({ role: "them", text: "Could you answer this one slowly?", start: ${now + 40000}, at: ${now + 41500} });`);
+  await run(`stillHearing = async () => false; pendingQuestion = null; lastAutoQuestion = null; state.listening = true; onTranscript({ role: "them", text: "Could you answer this one slowly?", start: ${now + 40000}, at: ${now + 41500} });`);
   await until(`answers.length === ${count + 1} && answers.at(-1).auto && answers.at(-1).text.length > 0`, 5000);
   await run(`submit();`); // ⌘↵ / Answer
   await sleep(400);

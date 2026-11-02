@@ -498,13 +498,13 @@ async function submit({ form = false } = {}) {
 }
 
 // Auto-answer (Interview mode, listening, Settings > Interview): once a
-// question is pending and the other side has gone quiet for QUIET_MS (speech
-// over and transcribed), answer it as if Answer were pressed. It never
+// question is pending and the other side has gone quiet (speech over and
+// transcribed), answer it on the first 100 ms tick with no extra wait. It never
 // interrupts an answer you asked for or a question you're typing: text in the
 // question box holds it off for TYPING_HOLD_MS after the last edit. It skips
 // while a panel is open (the transcript view doesn't count). Each question is
 // answered once; earlier answers stay.
-const QUIET_MS = 300;
+const QUIET_MS = 0;
 const TYPING_HOLD_MS = 5000;
 let autoTimer = null;
 let autoAnswerId = null; // the answer auto-answer started, while it streams

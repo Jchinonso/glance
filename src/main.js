@@ -9,7 +9,7 @@ import { caveman, keepsFacts } from "./compress.js";
 import { DEFAULT_BASE_URL, downloadModel, findModel, MODELS } from "./models.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
-import { ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
+import { answerSystemPrompt, ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
 import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, MOST_CAPABLE_ANTHROPIC_MODEL, PROVIDERS } from "./providers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -47,6 +47,8 @@ const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
 const HEARD_CONTEXT_MS = 60000; // a line heard this recently is what an untyped ask answered
 // Interviews need more: answers must stay consistent and not reuse stories.
 const INTERVIEW_PREVIOUS_LIMIT = 8;
+const PREWARM_EVERY_MS = 50 * 60 * 1000; // refresh the 1-hour prompt cache while listening
+const PREWARM_CHECK_MS = 10 * 60 * 1000;
 
 // provider: which LLM answers (see providers.js). model is the Anthropic model;
 // an OpenAI-compatible server uses openaiBaseUrl and openaiModel instead.
@@ -94,6 +96,8 @@ let nextId = 1;
 let shots = []; // screenshots attached to the next question: { id, data, thumb }
 let nextShotId = 1;
 let spend = { input: 0, output: 0, dollars: 0 }; // this session, all calls
+let lastAskOrPrewarmAt = 0; // last question or cache warm, for the 50-minute refresh
+let prewarming = false;
 
 // The speech model download, reported to the window. Only one download runs at
 // a time; a model asked for meanwhile waits its turn.
@@ -590,6 +594,7 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
     send("notice", { level: "error", text: config.provider === "openai" ? "Set the model and API key for your OpenAI-compatible server first." : "Add your Anthropic API key first." });
     return;
   }
+  lastAskOrPrewarmAt = Date.now();
   const llm = provider();
   const id = nextId++;
   const q = (question || "").trim();
@@ -624,7 +629,8 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
 
   let text = "";
   const model = currentModel();
-  log(`ask id=${id} heard=${heard} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${config.effort} screenshots=${screenshots.length}`);
+  const think = !heard || screenshots.length > 0;
+  log(`ask id=${id} heard=${heard} think=${think} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${config.effort} screenshots=${screenshots.length}`);
   let firstToken = false;
   const job = ask({
     provider: llm,
@@ -634,6 +640,7 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
     previous: answers.slice(config.style === "interview" ? -INTERVIEW_PREVIOUS_LIMIT : -PREVIOUS_LIMIT),
     screenshots,
     effort: config.effort,
+    think,
     style: config.style,
     customInstructions: sentInstructions(),
     resume: config.resume,
@@ -655,7 +662,7 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
     if (text) answers.push({ id, question: q, context, answer: text });
     const u = result.usage;
     const cost = addUsage(u, model);
-    log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=${u.output} aborted=false`);
+    log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=${u.output} cacheRead=${u.cacheRead} cacheWrite=${u.cacheWrite} aborted=false`);
     send("answer-end", { id, error: problem, usage: { input: u.input + u.cacheRead + u.cacheWrite, output: u.output, cost, model: llm.name(model) } });
   } catch (e) {
     const aborted = isAbort(e);
@@ -708,6 +715,33 @@ const approxTokens = (text) => Math.ceil(text.trim().length / 4);
 // through the free mechanical pass. Never both, so a compressed version isn't
 // mangled again.
 const sentInstructions = () => config.compressedInstructions || caveman(config.customInstructions);
+
+// Writes the answer prompt's cache before the first question, and refreshes it
+// while listening so repeats stay inside the 1-hour cache lifetime.
+async function prewarmAnswers() {
+  if (!canAsk() || prewarming) return;
+  prewarming = true;
+  lastAskOrPrewarmAt = Date.now();
+  const startedAt = Date.now();
+  try {
+    const u = await provider().prewarm({
+      model: currentModel(),
+      system: answerSystemPrompt({
+        style: config.style,
+        customInstructions: sentInstructions(),
+        resume: config.resume,
+        jobDescription: config.jobDescription,
+        profile: profile(),
+      }),
+      effort: config.effort,
+    });
+    log(`prewarm ms=${Date.now() - startedAt} cacheWrite=${u?.cacheWrite || 0} cacheRead=${u?.cacheRead || 0}`);
+  } catch (e) {
+    log("prewarm failed:", e);
+  } finally {
+    prewarming = false;
+  }
+}
 
 async function compressSavedInstructions(text) {
   if (!text.trim()) return send("notice", { level: "ok", text: "Custom instructions cleared." });
@@ -805,6 +839,7 @@ async function toggleListening() {
     if (!listener.start()) return;
     listening = true;
     listeningSince = Date.now();
+    prewarmAnswers();
   }
   broadcastState();
 }
@@ -1164,6 +1199,12 @@ app.whenReady().then(() => {
       text: `${failed.map(formatAccel).join(", ")} ${failed.length === 1 ? "is" : "are"} already used by another app. Change ${failed.length === 1 ? "it" : "them"} in Settings > General > Shortcuts.`,
     });
   }
+  // While listening, refresh the answer prompt's cache before it expires.
+  setInterval(() => {
+    if (!listening || current) return;
+    if (Date.now() - lastAskOrPrewarmAt < PREWARM_EVERY_MS) return;
+    prewarmAnswers();
+  }, PREWARM_CHECK_MS);
 });
 
 app.on("will-quit", () => {

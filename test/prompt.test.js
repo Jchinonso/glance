@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ask, splitKeys, systemPrompt } from "../src/assistant.js";
+import { ask, HUMAN_VOICE, splitKeys, summarizeSession, systemPrompt } from "../src/assistant.js";
 
 test("resume and job description go with every style, word for word", () => {
   const resume = "Led the billing migration, cut invoice errors 40%.";
@@ -25,6 +25,24 @@ test("Interview style leaves out the general rules that conflict with spoken ans
   for (const rule of ["State any assumption in one line", "what the main alternative would cost", "Never ask clarifying questions"]) assert.ok(!p.includes(rule), rule);
   assert.ok(p.includes("Resume = case study") && p.includes("never placeholders"));
   assert.ok(systemPrompt("brief", "", "", "").includes("State any assumption in one line"));
+});
+
+test("every answer style and the notes prompt use the human voice", async () => {
+  for (const style of ["brief", "natural", "interview"]) {
+    assert.ok(systemPrompt(style, "", "", "").includes(HUMAN_VOICE), style);
+  }
+  let notesSystem = "";
+  const provider = { name: () => "test", complete: ({ system }) => ((notesSystem = system), Promise.resolve({ text: "", usage: {}, stop: "end" })) };
+  await summarizeSession(provider, "m", { transcript: [], answers: [] });
+  assert.ok(notesSystem.includes(HUMAN_VOICE));
+});
+
+test("human voice keeps the existing format rules", () => {
+  const interview = systemPrompt("interview", "", "", "");
+  assert.ok(interview.includes('line "Keys: " with 3-4 key phrases'));
+  assert.ok(interview.includes('joined by " · "'));
+  assert.ok(interview.includes("at most one *note* line last"));
+  assert.ok(systemPrompt("brief", "", "", "").includes("Answer style: brief"));
 });
 
 // Captures the request ask() would send, without calling the API.
