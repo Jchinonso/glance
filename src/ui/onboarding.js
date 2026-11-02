@@ -1,9 +1,10 @@
 // Loaded before app.js as a plain script (its functions become globals).
 
-// Setup steps, in order. "welcome" comes first; the key step only when there's
-// no working key; the job description step only for interviews.
-function onboardingSteps({ needsKey, use }) {
-  return ["welcome", ...(needsKey ? ["key"] : []), "about", ...(use === "meetings" ? [] : ["job"]), "ready"];
+// Setup steps, in order. "welcome" comes first; the speech model step until it
+// is installed; the key step only when there's no working key; the job
+// description step only for interviews.
+function onboardingSteps({ needsKey, needsModel, use }) {
+  return ["welcome", ...(needsModel ? ["speech"] : []), ...(needsKey ? ["key"] : []), "about", ...(use === "meetings" ? [] : ["job"]), "ready"];
 }
 
 // "Step 2 of 4" for a setup step; the welcome screen isn't counted.

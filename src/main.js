@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
 import { caveman, keepsFacts } from "./compress.js";
+import { DEFAULT_BASE_URL, downloadModel, findModel, MODELS } from "./models.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
 import { ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
@@ -93,6 +94,104 @@ let nextId = 1;
 let shots = []; // screenshots attached to the next question: { id, data, thumb }
 let nextShotId = 1;
 let spend = { input: 0, output: 0, dollars: 0 }; // this session, all calls
+
+// The speech model download, reported to the window. Only one download runs at
+// a time; a model asked for meanwhile waits its turn.
+let speech = { status: "downloading", model: "small.en", received: 0, total: MODELS["small.en"].size, error: null };
+let speechTask = null;
+let pendingSpeechModel = null;
+let speechBroadcastAt = 0;
+let speechBroadcastTimer = null;
+const RETRY_DELAYS = [2000, 5000, 15000];
+
+const userModelsDir = () => path.join(app.getPath("userData"), "models");
+const bundledModelsDir = () => unpacked(path.join(here, "..", "models"));
+const modelDirs = () => [userModelsDir(), bundledModelsDir()];
+const installedModel = (name) => findModel(name, { dirs: modelDirs() });
+const modelsBaseUrl = () => process.env.GLANCE_MODELS_URL || DEFAULT_BASE_URL;
+
+// Progress arrives with every chunk; the window only needs a few updates a
+// second. Final changes (ready, error) go out at once.
+function broadcastSpeech(now = false) {
+  clearTimeout(speechBroadcastTimer);
+  speechBroadcastTimer = null;
+  if (now) {
+    speechBroadcastAt = Date.now();
+    return broadcastState();
+  }
+  const wait = 250 - (Date.now() - speechBroadcastAt);
+  if (wait <= 0) {
+    speechBroadcastAt = Date.now();
+    return broadcastState();
+  }
+  speechBroadcastTimer = setTimeout(() => {
+    speechBroadcastTimer = null;
+    speechBroadcastAt = Date.now();
+    broadcastState();
+  }, wait);
+}
+
+function setSpeechReady(name) {
+  speech = { status: "ready", model: name, received: MODELS[name].size, total: MODELS[name].size, error: null };
+  listener?.setTranscription(transcriptionOptions());
+  broadcastSpeech(true);
+}
+
+async function downloadWithRetries(name, retry) {
+  const started = Date.now();
+  const total = MODELS[name].size;
+  log(`speech model download start: ${name} (${Math.round(total / 1_000_000)} MB)`);
+  for (let attempt = 0; ; attempt++) {
+    try {
+      const file = await downloadModel(name, {
+        dir: userModelsDir(),
+        baseUrl: modelsBaseUrl(),
+        onProgress: ({ received, total: size }) => {
+          speech.received = received;
+          speech.total = size;
+          broadcastSpeech();
+        },
+      });
+      speech = { status: "ready", model: name, received: total, total, error: null };
+      log(`speech model download finish: ${name} in ${Date.now() - started}ms`);
+      listener?.setTranscription(transcriptionOptions());
+      broadcastSpeech(true);
+      return file;
+    } catch (e) {
+      speech = { ...speech, status: "error", error: e.message };
+      log(`speech model download error: ${name}:`, e);
+      broadcastSpeech(true);
+      if (!retry || attempt >= RETRY_DELAYS.length) return null;
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+      speech = { ...speech, status: "downloading", error: null };
+      broadcastSpeech(true);
+    }
+  }
+}
+
+function startModelDownload(name, { retry = true } = {}) {
+  if (!MODELS[name]) return Promise.resolve(null);
+  const installed = installedModel(name);
+  if (installed) {
+    setSpeechReady(name);
+    return Promise.resolve(installed);
+  }
+  if (speechTask) {
+    pendingSpeechModel = name;
+    return speechTask;
+  }
+  speech = { status: "downloading", model: name, received: 0, total: MODELS[name].size, error: null };
+  broadcastSpeech(true);
+  const task = downloadWithRetries(name, retry).finally(() => {
+    if (speechTask === task) speechTask = null;
+    const next = pendingSpeechModel;
+    pendingSpeechModel = null;
+    if (next) startModelDownload(next, { retry: true });
+  });
+  speechTask = task;
+  return task;
+}
+
 
 // usage is a provider's normalized { input, output, cacheRead, cacheWrite }.
 // Cost is null when the provider has no price list (OpenAI-compatible).
@@ -251,6 +350,7 @@ function state() {
     notice: config.notice,
     jdCheckedAt: config.jdCheckedAt,
     transcription: config.transcription,
+    speech: { ...speech },
     vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
     compactAnswers: config.compactAnswers,
@@ -690,6 +790,15 @@ async function toggleListening() {
     listening = false;
     listeningSince = null;
   } else {
+    if (!transcriptionOptions().modelPath) {
+      if (speech.status === "error") {
+        send("notice", { level: "error", text: `${speech.error} Use Try again to download the speech model.` });
+      } else {
+        const pct = speech.total ? Math.round((100 * speech.received) / speech.total) : 0;
+        send("notice", { level: "warn", text: `The speech model is still downloading (${pct}%). Listen works once it's done.` });
+      }
+      return;
+    }
     if (!listener.start()) return;
     listening = true;
     listeningSince = Date.now();
@@ -699,15 +808,16 @@ async function toggleListening() {
 
 // "fast" = base.en, "accurate" = small.en (about 2x slower, much better with
 // jargon, accents and noise; still faster than real time on Apple Silicon).
-// Falls back to base.en if the bigger model is missing.
+// Fast falls back to small.en until base.en has finished downloading.
 const TECH_TERMS = "React, Next.js, TypeScript, JavaScript, Node.js, Python, Go, Rust, Java, Postgres, PostgreSQL, MySQL, Redis, MongoDB, Kubernetes, Docker, GraphQL, REST, API, AWS, GCP, Azure, SQL, CI/CD, LeetCode";
 
 function transcriptionOptions() {
-  const model = (name) => unpacked(path.join(here, "..", "models", `ggml-${name}.bin`));
-  const accurate = config.transcription === "accurate" && existsSync(model("small.en"));
+  const small = installedModel("small.en");
+  const base = installedModel("base.en");
+  const modelPath = config.transcription === "fast" ? base || small : small || base;
   const words = config.vocabulary.trim();
   return {
-    modelPath: model(accurate ? "small.en" : "base.en"),
+    modelPath: modelPath || null,
     prompt: `Terms: ${TECH_TERMS}.${words ? ` Names and terms: ${words}.` : ""}`,
   };
 }
@@ -880,6 +990,11 @@ ipcMain.handle("set-said", (_e, id, text) => {
   if (a) a.said = String(text ?? "").trim().slice(0, 1000) || undefined;
 });
 ipcMain.handle("toggle-listening", () => toggleListening());
+// Setup's Try again, or retrying after the automatic attempts gave up.
+ipcMain.handle("download-model", () => {
+  if (speechTask || speech.status === "ready") return;
+  startModelDownload(speech.model || "small.en", { retry: true });
+});
 // Saves the key for the current provider.
 ipcMain.handle("set-api-key", (_e, key) => {
   const value = String(key ?? "").trim() || null;
@@ -922,6 +1037,7 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   else if (name === "style" && ["brief", "natural", "interview"].includes(value)) config.style = value;
   else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
     config.transcription = value;
+    if (value === "fast" && !installedModel("base.en")) startModelDownload("base.en");
     listener?.setTranscription(transcriptionOptions());
   } else if (name === "vocabulary") {
     config.vocabulary = String(value ?? "").slice(0, 500);
@@ -1016,9 +1132,12 @@ app.on("second-instance", () => win?.show());
 app.whenReady().then(() => {
   log("start", app.getVersion(), "screen status:", systemPreferences.getMediaAccessStatus("screen"));
   loadConfig();
-  if (!existsSync(unpacked(path.join(here, "..", "models", "ggml-base.en.bin")))) {
-    console.warn("Whisper model missing: transcription will fail.");
-  }
+  // The speech model is downloaded on first launch instead of shipping inside
+  // the app. A copy in the checkout (npm run dev) or an older build still
+  // counts as installed.
+  if (installedModel("small.en")) setSpeechReady("small.en");
+  else startModelDownload("small.en");
+  if (config.transcription === "fast" && !installedModel("base.en")) startModelDownload("base.en");
   createWindow();
   createTray();
   // Before the first Listen: see Listener.prepare.

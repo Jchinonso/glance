@@ -15,6 +15,7 @@ contextBridge.exposeInMainWorld("glance", {
   stillHearing: () => ipcRenderer.invoke("still-hearing"),
   setSaid: (id, text) => ipcRenderer.invoke("set-said", id, text),
   toggleListening: () => ipcRenderer.invoke("toggle-listening"),
+  downloadModel: () => ipcRenderer.invoke("download-model"),
   setApiKey: (key) => ipcRenderer.invoke("set-api-key", key),
   setSetting: (name, value) => ipcRenderer.invoke("set-setting", name, value),
   importDoc: (kind) => ipcRenderer.invoke("import-doc", kind),

@@ -57,9 +57,9 @@ The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated
 1. Download the latest **Glance-…-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
 2. Open it and drag **Glance** onto **Applications**.
 3. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
-4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
+4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance). The first launch also downloads the speech model once, about 490 MB, from [Hugging Face's whisper.cpp repo](https://huggingface.co/ggerganov/whisper.cpp) into `~/Library/Application Support/Glance/models`.
 
-Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration through Metal) and its models are inside the app, which is why the download is about 700 MB. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
+Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration through Metal) is inside the app, which is why the download is about 100 MB. The speech model downloads on first launch instead of shipping inside the app, so setup can take a few minutes on a slow connection. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
 
 ## Requirements
 
@@ -73,7 +73,7 @@ Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration t
 # 1. The transcription engine; the build copies it into the app (vendor/whisper)
 brew install whisper-cpp
 
-# 2. The speech models (not in git)
+# 2. Optional speech models for npm run dev (not packed into the app)
 mkdir -p models
 curl -L -o models/ggml-base.en.bin  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 curl -L -o models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
@@ -89,7 +89,9 @@ npm start   # opens dist/Glance-darwin-arm64/Glance.app
 npm run dmg
 ```
 
-On first launch Glance walks you through setup: an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. Everything can be changed later in Settings.
+On first launch Glance walks you through setup: the speech model download, an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. Everything can be changed later in Settings.
+
+A `models/` folder in the checkout is still used by `npm run dev` when present, but it is no longer packed into the app: packaged builds download the speech model on first launch.
 
 macOS asks for **Screen & System Audio Recording** permission the first time you listen or take a screenshot. Allow it, then reopen Glance once: macOS only sends audio to an app after it reopens. macOS remembers the permission, so this happens only once.
 
@@ -154,7 +156,7 @@ On Anthropic, Glance caches its instructions between questions (repeats cost a t
 - **Audio stays on your Mac.** Transcription runs locally with Whisper. Only text (and screenshots you take or allow) is sent to your AI provider.
 - **The microphone is never recorded.** Glance hears only the Mac's audio, the other side of the call.
 - **Keys** are stored in the macOS login keychain, not in files.
-- **Settings** live in `~/Library/Application Support/glance/config.json`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
+- **Settings** live in `~/Library/Application Support/glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
 - Glance treats the transcript, screen text, résumé and job description as data, not instructions.
 - **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
 
@@ -201,7 +203,8 @@ ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API
 ## Troubleshooting
 
 - **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
-- **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package` and the models are in `models/`.
+- **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package`; the speech model is downloaded on first launch, or used from `models/` by `npm run dev`.
+- **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Transcription for the fast model). It resumes from where it stopped, and the automatic retries continue on their own.
 - **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
 - **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
@@ -213,6 +216,7 @@ Dragging an app to the Trash doesn't tell it anything, so on macOS an app's keys
 1. Open Glance, then **Settings › General › Delete all Glance data**. It lists what it removes and asks you to confirm:
    - your API keys, from the macOS keychain;
    - settings, résumé, job description and your details (`~/Library/Application Support/Glance`);
+   - the downloaded speech models (`~/Library/Application Support/Glance/models`);
    - logs (`~/Library/Logs/Glance`);
    - optionally, your saved meeting notes (`~/Documents/Glance`), moved to the Trash.
 

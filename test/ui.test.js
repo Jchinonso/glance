@@ -5,12 +5,13 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import electronPath from "electron";
+import { MODELS } from "../src/models.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skip = !!process.env.GLANCE_SKIP_UI || process.platform !== "darwin";
@@ -86,6 +87,12 @@ before(async () => {
   writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: modelUrl, openaiModel: "fake", autoScreen: false, style: "brief",
     // As written by builds before 1.2.4: every setting saved, Opus included.
     model: "claude-opus-5-5", effort: "low", invisible: true }));
+  // The speech model is already installed in this folder, so the UI tests don't
+  // download it. The size check is all findModel needs.
+  mkdirSync(path.join(dir, "models"), { recursive: true });
+  const modelFile = path.join(dir, "models", MODELS["small.en"].file);
+  writeFileSync(modelFile, "");
+  truncateSync(modelFile, MODELS["small.en"].size);
   const port = 9400 + Math.floor(Math.random() * 500);
   app = spawn(electronPath, [root, `--remote-debugging-port=${port}`], { env: { ...process.env, GLANCE_TEST_DIR: dir }, stdio: "ignore" });
   let page;
@@ -146,6 +153,85 @@ test("first launch: welcome, about you, job description, ready", { skip }, async
   await click("#obNext");
   await until(`onboarding === null && state.onboarded && state.style === "interview"`);
   assert.ok(await shown("modePick"));
+});
+
+test("setup: a missing speech model gets a step with progress, Continue, and Try again", { skip }, async () => {
+  await run(`state.onboarded = false; state.speech = { status: "downloading", model: "small.en", received: 123000000, total: 488000000, error: null };
+    onboarding = { step: "welcome", needsKey: false, needsModel: true, use: "interviews", hide: false }; render();`);
+  await click("#obNext");
+  assert.equal(await run(`return onboarding.step;`), "speech");
+  assert.equal(await run(`return document.querySelector('#onboard [data-step="speech"] .ob-title').textContent;`), "Download the speech model");
+  assert.equal(await run(`return document.getElementById("obSpeechMeta").textContent;`), "123 of 488 MB");
+  assert.equal(await run(`return document.getElementById("obNext").textContent;`), "Continue");
+  assert.match(await run(`return document.getElementById("obSpeechFill").style.width;`), /25/);
+  // Continue lets the user finish setup while the download carries on.
+  await click("#obNext");
+  assert.equal(await run(`return onboarding.step;`), "about");
+
+  // Ready moves on by itself.
+  await run(`onboarding.step = "speech"; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  assert.equal(await run(`return onboarding.step;`), "about");
+
+  // Failure shows the message and a Try again button that asks for a retry.
+  await run(`onboarding.step = "speech"; state.speech = { status: "error", model: "small.en", received: 1000, total: 488000000, error: "No connection." }; render();`);
+  assert.ok(await shown("obSpeechError"));
+  assert.equal(await run(`return document.getElementById("obSpeechError").textContent;`), "No connection.");
+  await run(`window.__retried = false; requestSpeechDownload = () => { window.__retried = true; };`);
+  await click("#obSpeechRetry");
+  assert.equal(await run(`return window.__retried;`), true);
+  await run(`requestSpeechDownload = () => g.downloadModel(); onboarding = null; state.onboarded = true; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+});
+
+test("setup: an installed speech model means no speech step", { skip }, async () => {
+  assert.equal(await run(`return onboardingSteps({ needsKey: false, needsModel: false, use: "interviews" }).includes("speech");`), false);
+  await run(`state.onboarded = false; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; startOnboarding(); render();`);
+  assert.equal(await run(`return onboarding.step;`), "welcome");
+  await click("#obNext");
+  assert.notEqual(await run(`return onboarding.step;`), "speech");
+  await run(`onboarding = null; state.onboarded = true; render();`);
+});
+
+test("setup: a returning user's speech step closes setup on Continue", { skip }, async () => {
+  await run(`state.onboarded = true; state.style = "brief"; state.resume = "Jane Doe, engineer";
+    state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
+    startOnboarding("speech"); render();`);
+  assert.equal(await run(`return onboarding.step;`), "speech");
+  await click("#obNext");
+  await until(`onboarding === null`);
+  assert.equal(await run(`return state.onboarded;`), true);
+
+  // Interview mode still needs the resume step before setup can close.
+  await run(`state.onboarded = true; state.style = "interview"; state.resume = "";
+    state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
+    startOnboarding("speech"); render();`);
+  await click("#obNext");
+  assert.equal(await run(`return onboarding.step;`), "about");
+  assert.ok(await shown("obResume"));
+  await run(`onboarding = null;
+    await g.setSetting("resume", "Jane Doe, engineer");
+    await g.setSetting("style", "brief");
+    await g.setSetting("setupActive", false);
+    state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null };
+    render();`);
+  await until(`state.style === "brief" && !!state.resume`);
+});
+
+test("setup: a speech step that finished by itself doesn't bounce when you go Back", { skip }, async () => {
+  await run(`onboarding = null; state.onboarded = false; state.style = "brief";
+    state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
+    onboarding = { step: "speech", needsKey: false, needsModel: true, use: "meetings", hide: false }; render();`);
+  assert.equal(await run(`return onboarding.sawSpeechDownloading;`), true);
+  await run(`state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  assert.equal(await run(`return onboarding.step;`), "about");
+  assert.equal(await run(`return !!onboarding.sawSpeechDownloading;`), false);
+  // Back onto the installed step stays there instead of bouncing forward.
+  await click("#obBack");
+  assert.equal(await run(`return onboarding.step;`), "speech");
+  assert.ok(await shown("obSpeechDone"));
+  assert.equal(await run(`return document.getElementById("obNext").textContent;`), "Continue");
+  await click("#obNext");
+  assert.equal(await run(`return onboarding.step;`), "about");
+  await run(`onboarding = null; state.onboarded = true; state.style = "brief"; await g.setSetting("setupActive", false); render();`);
 });
 
 test("settings: every tab, and each form goes back to the tab it came from", { skip }, async () => {

@@ -178,6 +178,15 @@ function renderMenu() {
   $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${state.keyFromEnv}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
+  const speech = state.speech || {};
+  const fastModel = state.transcription === "fast" && speech.model === "base.en" && speech.status !== "ready";
+  $("fastModelStatus").hidden = !fastModel;
+  $("fastModelStatus").classList.toggle("caution", fastModel && speech.status === "error");
+  if (fastModel) {
+    const pct = Math.round((100 * (speech.received || 0)) / (speech.total || 1));
+    $("fastModelText").textContent = speech.status === "error" ? speech.error || "The fast speech model download failed." : `Downloading fast model… ${pct}%`;
+    $("fastModelRetry").hidden = speech.status !== "error";
+  } else $("fastModelRetry").hidden = true;
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
   for (const b of $("style").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === meetingStyle()));
 }
@@ -213,6 +222,16 @@ function renderShortcutList() {
 }
 
 function renderStage() {
+  // The speech step finishes itself once the model is ready, but only if it
+  // was shown while the download was still going. During first setup, move on
+  // to the next step; someone who already finished setup came back only for
+  // the model, so close it again (unless the resume is missing). Clearing the
+  // flag means Back onto the step shows it as installed instead of bouncing.
+  if (onboarding?.step === "speech" && state.speech?.status === "ready" && onboarding.sawSpeechDownloading) {
+    onboarding.sawSpeechDownloading = false;
+    if (state.onboarded && !resumeMissing()) finishOnboarding();
+    else onboarding.step = nextStep(1);
+  }
   for (const b of document.querySelectorAll("[data-back]")) b.hidden = !backToSettings;
   // Setup covers everything; its key step uses the key form itself.
   const onb = !!onboarding && onboarding.step !== "key";
@@ -1101,6 +1120,7 @@ function startOnboarding(step = "welcome") {
   onboarding = {
     step,
     needsKey: !state.hasKey,
+    needsModel: state.speech?.status !== "ready",
     use: state.style === "interview" ? "interviews" : state.resume?.trim() ? "both" : "meetings",
   };
   // Prefill with what's already saved.
@@ -1128,7 +1148,21 @@ function renderOnboarding() {
   $("onboardHead").hidden = step === "welcome";
   $("onboardSkip").hidden = step === "ready" || !canSkipSetup();
   $("obBack").hidden = step === "welcome";
-  $("obNext").textContent = step === "welcome" ? "Get started" : step === "ready" ? "Start using Glance" : "Next";
+  $("obNext").textContent = step === "welcome" ? "Get started" : step === "speech" ? "Continue" : step === "ready" ? "Start using Glance" : "Next";
+  if (step === "speech") {
+    const speech = state.speech || {};
+    if (speech.status !== "ready") onboarding.sawSpeechDownloading = true;
+    const total = speech.total || 488_000_000;
+    const received = Math.min(speech.received || 0, total);
+    const mb = (n) => Math.round(n / 1_000_000).toLocaleString();
+    $("obSpeechFill").style.width = `${total ? (100 * received) / total : 0}%`;
+    $("obSpeechMeta").textContent = `${mb(received)} of ${mb(total)} MB`;
+    $("obSpeechProgress").hidden = speech.status === "error";
+    $("obSpeechError").hidden = speech.status !== "error";
+    $("obSpeechError").textContent = speech.error || "";
+    $("obSpeechRetry").hidden = speech.status !== "error";
+    $("obSpeechDone").hidden = speech.status !== "ready";
+  }
   for (const b of $("obUse").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === onboarding.use));
   const words = $("obResume").value.trim() ? $("obResume").value.trim().split(/\s+/).length : 0;
   $("obResumeMeta").textContent = words ? `${words.toLocaleString()} words` : "";
@@ -1180,6 +1214,18 @@ $("obNext").addEventListener("click", () => {
   if (onboarding.step === "about" && resumeRequired() && !$("obResume").value.trim()) return $("obResume").focus();
   saveStep();
   if (onboarding.step === "ready") return finishOnboarding();
+  // Someone who already finished setup came back only for the model: Continue
+  // closes setup, or moves on to the resume if Interview mode still needs one.
+  if (onboarding.step === "speech" && state.onboarded) {
+    if (resumeMissing()) {
+      onboarding.step = "about";
+      render();
+      $("stage").scrollTop = 0;
+      $("obResume").focus();
+      return;
+    }
+    return finishOnboarding();
+  }
   onboarding.step = nextStep(1);
   render();
   $("stage").scrollTop = 0;
@@ -1200,6 +1246,11 @@ $("keyStepBack").addEventListener("click", () => {
   onboarding.step = "welcome";
   render();
 });
+function requestSpeechDownload() {
+  return g.downloadModel();
+}
+$("obSpeechRetry").addEventListener("click", () => requestSpeechDownload());
+$("fastModelRetry").addEventListener("click", () => requestSpeechDownload());
 $("obUse").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (!v) return;
@@ -1283,7 +1334,9 @@ g.getState().then((s) => {
   heard.forEach(renderTranscriptLine);
   // Setup until done; and again while Interview mode has no resume, since
   // interview answers are built from it (Skip setup can't leave without one).
+  // A missing speech model brings back just that step.
   if (!state.onboarded) startOnboarding();
+  else if (state.speech?.status !== "ready") startOnboarding("speech");
   else if (resumeMissing()) startOnboarding("about");
   else maybeAskJob(); // opened in Interview mode: likely a new interview
   render();
