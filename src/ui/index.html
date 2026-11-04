@@ -160,18 +160,13 @@
                 <div class="row-text"><span>AI provider</span><small>Anthropic, OpenAI or any compatible service, and its API key</small></div>
                 <span class="row-meta"><span id="keyMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
               </button>
-              <div class="row" id="anthropicModelRow">
-                <div class="row-text"><span>Model</span><small id="modelHint">Opus is the most capable</small></div>
-                <div class="seg" id="model" role="radiogroup">
-                  <button role="radio" data-value="claude-opus-5-5">Opus</button>
-                  <button role="radio" data-value="claude-sonnet-5-5">Sonnet</button>
-                  <button role="radio" data-value="claude-haiku-5-5">Haiku</button>
+              <div class="row" id="modelRow">
+                <div class="row-text"><span>Model</span><small id="modelHint"></small></div>
+                <div class="model-picker">
+                  <select id="settingsModel" aria-label="Model"></select>
+                  <button type="button" class="textlink" id="refreshModelsBtn">Refresh</button>
                 </div>
               </div>
-              <button class="row link" id="openaiModelRow" hidden>
-                <div class="row-text"><span>Model</span><small id="openaiModelHint"></small></div>
-                <span class="row-meta"><span id="openaiModelMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
-              </button>
               <div class="row" id="effortRow">
                 <div class="row-text"><span>Depth</span><small>How long it thinks first. Deeper is slower and costs more.</small></div>
                 <div class="seg" id="effort" role="radiogroup">
@@ -402,23 +397,40 @@
           <button type="button" class="back" id="keyStepBack" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M12.5 4.5 7 10l5.5 5.5" /></svg>Back</button>
           <span class="step-label" id="keyStepLabel" hidden></span>
           <p class="lead" id="keyLead">Choose who answers, then add an API key.</p>
-          <div class="seg" id="keyProvider" role="radiogroup">
-            <button type="button" role="radio" data-value="anthropic">Anthropic</button>
-            <button type="button" role="radio" data-value="openai">OpenAI-compatible</button>
+          <div class="provider-cards" id="keyProvider" role="radiogroup" aria-label="AI provider">
+            <button type="button" class="provider-card" role="radio" data-value="openai">
+              <span class="pc-title">OpenAI-compatible</span>
+              <span class="pc-desc">Any server that speaks the OpenAI API, hosted or on your network.</span>
+              <span class="pc-note">Bring your own endpoint</span>
+            </button>
+            <button type="button" class="provider-card" role="radio" data-value="anthropic">
+              <span class="pc-title">Anthropic</span>
+              <span class="pc-desc">Claude models through your own API key.</span>
+              <span class="pc-note">Hosted · pay per use</span>
+            </button>
           </div>
-          <div class="keyfields" id="openaiFields" hidden>
-            <label>Base URL<input id="keyBaseUrl" type="url" placeholder="https://api.openai.com/v1" autocomplete="off" spellcheck="false" /></label>
-            <label>Model<input id="keyModel" placeholder="e.g. gpt-4o, gemini-2.5-pro, llama3.1" autocomplete="off" spellcheck="false" /></label>
+          <div class="conn-card">
+            <div class="keyfields" id="openaiFields" hidden>
+              <label>Server address<input id="keyBaseUrl" type="url" class="mono" placeholder="https://openrouter.ai/api/v1" autocomplete="off" spellcheck="false" /></label>
+            </div>
+            <div class="keyfields-row">
+              <label>Model<input id="keyModel" list="keyModelList" placeholder="Choose or type a model" autocomplete="off" spellcheck="false" /></label>
+              <label>API key<input id="keyInput" type="password" placeholder="Paste your API key" autocomplete="off" spellcheck="false" /></label>
+            </div>
+            <datalist id="keyModelList"></datalist>
+            <p class="model-status" id="keyModelStatus" hidden></p>
+            <div class="test-row">
+              <button type="button" class="test-btn" id="testConnBtn">Test connection</button>
+              <span class="test-status" id="testConnStatus" role="status" aria-live="polite"><span class="dot" aria-hidden="true"></span><span id="testConnText">Not tested since your last change</span></span>
+            </div>
           </div>
           <p class="hint" id="keyHint">Create one at console.anthropic.com. It's saved in your macOS keychain.</p>
-          <div class="keyrow">
-            <input id="keyInput" type="password" placeholder="sk-ant-…" autocomplete="off" spellcheck="false" />
+          <div class="key-actions">
+            <button type="button" class="textlink danger" id="removeKeyBtn" hidden>Remove saved key</button>
+            <span class="spacer"></span>
+            <span class="key-manage" id="keyManage" hidden><button type="button" class="ghost" id="cancelKeyBtn">Cancel</button></span>
             <button type="button" class="ghost" id="pasteKeyBtn">Paste</button>
             <button type="submit" class="primary">Save</button>
-          </div>
-          <div class="keyrow secondary" id="keyManage" hidden>
-            <button type="button" class="ghost" id="cancelKeyBtn">Cancel</button>
-            <button type="button" class="ghost danger" id="removeKeyBtn">Remove key</button>
           </div>
         </form>
 

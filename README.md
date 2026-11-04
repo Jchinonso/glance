@@ -127,7 +127,7 @@ Glance starts in Interview mode. Switch with the mode menu beside the question b
 
 The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**). Panels opened from Settings have a Back button that returns to the same tab.
 
-- **Answers:** AI provider and key, model (Opus, Sonnet or Haiku on Anthropic), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
+- **Answers:** AI provider and key, model (listed from the provider, searchable, and any model ID can be typed), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
 - **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
 - **Session:** spending so far, the transcript, Save notes, Clear session.
 - **General:** Transcription (Accurate or Fast), Appearance (System, Light, Dark), words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
@@ -138,13 +138,19 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 
 ## AI providers
 
+Choose a provider in **Settings › Answers › AI provider**, or in setup. The two cards open the same form: **OpenAI-compatible** for any server that speaks the OpenAI API (hosted or on your network), or **Anthropic** for Claude through your own key. OpenAI-compatible has a **Server address**, a **Model** box and an **API key**; Anthropic has just the model and key.
+
+Models are listed from the provider itself: Anthropic's Models API, or the server's `/models` endpoint for OpenAI-compatible services. The **Model** box filters as you type (OpenRouter lists hundreds), and you can type any model ID the list doesn't show. Models that can't answer a chat (embeddings, speech, image and moderation models) and OpenRouter's delayed `:batch` versions are left out. In **Settings › Answers › Model**, the same list is a dropdown with a **Refresh** link, and the line under it shows the price per million tokens for Opus 5.5, Sonnet 5.5 and Haiku 5.5. **Depth** only appears for models that support it, so it's hidden for OpenAI-compatible servers and older Claude models such as Haiku 4.5.
+
+**Test connection** sends one tiny request with the values currently in the form, even before you save them, and reports how long the model took to reply. Use it to check a new key, model or server address before relying on it.
+
 | Provider | Setup | Cost shown |
 | --- | --- | --- |
-| Anthropic | API key from [console.anthropic.com](https://console.anthropic.com) | Yes, at list prices |
-| OpenAI, Gemini, OpenRouter, Groq, Mistral… | Base URL, model name and API key | Tokens only |
-| Ollama or LM Studio (local) | Base URL such as `http://localhost:11434/v1` and model name; no key | Tokens only |
+| Anthropic | API key from [console.anthropic.com](https://console.anthropic.com) | Dollars for Opus 5.5, Sonnet 5.5 and Haiku 5.5; tokens for other Claude models |
+| OpenAI, Gemini, OpenRouter, Groq, Mistral… | Server address, model and API key | Tokens only |
+| Ollama or LM Studio (local) | Server address such as `http://localhost:11434/v1` and model; no key | Tokens only |
 
-On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
+On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. Depth's thinking control and the prompt cache apply only to Anthropic. Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
 
 ## Troubleshooting
 

@@ -65,6 +65,20 @@ before(async () => {
     req.on("end", async () => {
       const request = JSON.parse(body || "{}");
       requests.push(request);
+      // Model listing for the provider form.
+      if (req.method === "GET" && req.url.endsWith("/models")) {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ data: [{ id: "fake", name: "Fake Model" }, { id: "alpha", name: "Alpha" }] }));
+      }
+      // Test connection: the smallest possible chat request.
+      if (request.messages?.length === 1 && request.messages[0]?.content === "Hi") {
+        if (request.model === "bad") {
+          res.writeHead(401, { "content-type": "application/json" });
+          return res.end(JSON.stringify({ error: { message: "invalid api key" } }));
+        }
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ choices: [{ message: { content: "Hi" }, finish_reason: "stop" }] }));
+      }
       res.writeHead(200, { "content-type": "text/event-stream" });
       // "slowly" in the question being asked (not earlier answers): one piece,
       // then hang until stopped.
@@ -645,6 +659,103 @@ test("without an API key: the key form shows, the gear still opens Settings, Lis
   await until(`state.hasKey`);
   assert.ok(!(await shown("keyForm")));
   assert.equal(await run(`return getComputedStyle(document.getElementById("listenBtn")).display;`), "flex");
+});
+
+test("provider form: no key yet is a hint, not an error, except for a local server", { skip }, async () => {
+  await run(`await g.setSetting("provider", "openai");`);
+  await until(`state.provider === "openai"`);
+  await run(`listModels = async () => ({ error: "api.openai.com rejected the API key. Check it in Settings > Answers > AI provider." });
+    setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();`);
+  await click("#keyBtn");
+  const status = async (url, keyHint) => {
+    await run(`state.keyHint = ${JSON.stringify(keyHint)}; document.getElementById("keyInput").value = "";
+      document.getElementById("keyBaseUrl").value = ${JSON.stringify(url)}; await loadKeyModels();`);
+    return run(`const el = document.getElementById("keyModelStatus"); return [el.className, el.textContent];`);
+  };
+  // No key, hosted server: a hint.
+  assert.deepEqual(await status("https://api.openai.com/v1", null), ["model-status loading", "Paste your API key to load the models."]);
+  // A saved key: the real error, without "Check it in Settings…" since this is that form.
+  const [cls, text] = await status("https://api.openai.com/v1", "1234");
+  assert.equal(cls, "model-status error");
+  assert.match(text, /^api\.openai\.com rejected the API key\. Retry$/);
+  // A local server needs no key, so its error shows even without one.
+  await run(`listModels = async () => ({ error: "Can't reach localhost:11434. Check the base URL in Settings > Answers > AI provider, and your connection." });`);
+  const [localCls, localText] = await status("http://localhost:11434/v1", null);
+  assert.equal(localCls, "model-status error");
+  assert.match(localText, /Can't reach localhost:11434\. Check the server address and your connection\./);
+  await click("#cancelKeyBtn");
+  await run(`setMenu(false); listModels = (p) => g.listModels(p); state.keyHint = null;`);
+});
+
+test("provider form: cards switch provider, models load, Test connection resets on edits", { skip }, async () => {
+  await run(`await g.setSetting("provider", "openai");`);
+  await until(`state.provider === "openai"`);
+  await run(`listModels = async () => ({ models: [{ id: "fake", name: "Fake Model" }, { id: "alpha", name: "Alpha" }] });
+    testConnection = async ({ model }) => model === "bad" ? { error: "That key was rejected." } : { ok: true, ms: 800 };
+    setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();`);
+  await click("#keyBtn");
+  assert.ok(await shown("keyForm"));
+  await until(`document.querySelectorAll("#keyModelList option").length === 2`);
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#keyModelList option")].map((o) => o.value);`), ["fake", "alpha"]);
+  assert.equal(await run(`return document.getElementById("keyModel").value;`), "fake", "the saved model is preselected");
+
+  await click('#keyProvider [data-value="anthropic"]');
+  await until(`state.provider === "anthropic"`);
+  assert.equal(await run(`return document.querySelector('#keyProvider [data-value="anthropic"]').getAttribute("aria-checked");`), "true");
+  await click('#keyProvider [data-value="openai"]');
+  await until(`state.provider === "openai"`);
+
+  await run(`const m = document.getElementById("keyModel"); m.value = "fake"; m.dispatchEvent(new Event("input"));`);
+  await click("#testConnBtn");
+  await until(`document.getElementById("testConnText").textContent.includes("Connected")`);
+  assert.equal(await run(`return document.getElementById("testConnText").textContent;`), "Connected · fake replied in 0.8 s");
+  assert.ok(await run(`return document.getElementById("testConnStatus").classList.contains("ok");`));
+
+  await run(`const m = document.getElementById("keyModel"); m.value = "alpha"; m.dispatchEvent(new Event("input"));`);
+  assert.equal(await run(`return document.getElementById("testConnText").textContent;`), "Not tested since your last change");
+  await run(`const m = document.getElementById("keyModel"); m.value = "bad"; m.dispatchEvent(new Event("input"));`);
+  await click("#testConnBtn");
+  await until(`document.getElementById("testConnText").textContent.includes("rejected")`);
+  assert.ok(await run(`return document.getElementById("testConnStatus").classList.contains("error");`));
+
+  await click("#cancelKeyBtn");
+  await run(`setMenu(false); listModels = (p) => g.listModels(p); testConnection = (p) => g.testConnection(p);`);
+});
+
+test("settings: the model hint shows known prices, and Depth hides for models without effort", { skip }, async () => {
+  await run(`state.provider = "anthropic"; state.modelOptions = []; state.model = "claude-haiku-5-5"; state.effortSupported = true;
+    setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click(); render();`);
+  // No list fetched yet: the models Glance knows are offered.
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModel option")].map((o) => o.value);`), ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
+  assert.match(await run(`return document.getElementById("modelHint").textContent;`), /Haiku 5\.5: \$0\.1 \/ \$0\.5 per million tokens/);
+  assert.equal(await run(`return document.getElementById("effortRow").hidden;`), false);
+  await run(`state.model = "claude-haiku-4-5"; state.effortSupported = false; render();`);
+  assert.match(await run(`return document.getElementById("modelHint").textContent;`), /no prices/);
+  assert.equal(await run(`return document.getElementById("effortRow").hidden;`), true);
+  await run(`setMenu(false); render();`);
+});
+
+test("settings: the model dropdown lists state.modelOptions and saves the choice", { skip }, async () => {
+  await run(`state.provider = "openai";
+    state.modelOptions = [{ id: "alpha", name: "Alpha" }, { id: "beta", name: "Beta" }];
+    state.openaiModel = "alpha"; setMenu(true);
+    document.querySelector('#settingsTabs [data-tab="answers"]').click(); render();`);
+  await until(`document.querySelectorAll("#settingsModel option").length === 2`);
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModel option")].map((o) => [o.value, o.textContent]);`), [["alpha", "Alpha"], ["beta", "Beta"]]);
+  assert.equal(await run(`return document.getElementById("settingsModel").value;`), "alpha");
+  await run(`const s = document.getElementById("settingsModel"); s.value = "beta"; s.dispatchEvent(new Event("change"));`);
+  await until(`state.openaiModel === "beta"`);
+  // The saved model still shows when the provider's list doesn't include it.
+  await run(`state.openaiModel = "gamma"; state.modelOptions = [{ id: "alpha", name: "Alpha" }]; render();`);
+  assert.equal(await run(`return document.getElementById("settingsModel").value;`), "gamma");
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModel option")].map((o) => o.value);`), ["gamma", "alpha"]);
+  // Refresh asks the provider for a fresh list.
+  await run(`window.__listCalls = 0; listModels = async () => { window.__listCalls++; return { models: [{ id: "delta", name: "Delta" }] }; };`);
+  await click("#refreshModelsBtn");
+  await until(`window.__listCalls === 1`);
+  await until(`document.getElementById("refreshModelsBtn").textContent === "1 model"`);
+  await run(`listModels = (p) => g.listModels(p); await g.setSetting("openaiModel", "fake"); setMenu(false);`);
+  await until(`state.openaiModel === "fake"`);
 });
 
 test("the no-sound warning offers settings and a reopen", { skip }, async () => {

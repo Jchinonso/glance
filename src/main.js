@@ -10,7 +10,7 @@ import { DEFAULT_BASE_URL, downloadModel, findModel, MODELS } from "./models.js"
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
 import { answerSystemPrompt, ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
-import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, MOST_CAPABLE_ANTHROPIC_MODEL, PROVIDERS } from "./providers.js";
+import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, MOST_CAPABLE_ANTHROPIC_MODEL, PROVIDERS, supportsEffort } from "./providers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 // Files run by external programs (whisper-cli, audiotee) must come from the
@@ -61,6 +61,9 @@ const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openai
   compactAnswers: false,
   // Interview mode, while listening: answer a heard question once they finish.
   autoAnswer: true,
+  // Last model list fetched per provider and base URL, so the dropdown can
+  // show something before the network answers.
+  modelLists: {},
   apiKey: null, openaiKey: null };
 // Saved settings are upgraded in order, each step once: a file at version n
 // runs CONFIG_MIGRATIONS[n] onward. Only settings changed from their default
@@ -226,6 +229,43 @@ function canAsk() {
   return !!apiKey();
 }
 
+const validBaseUrl = (url) => /^https?:\/\/\S+$/i.test(url);
+const normalizeBaseUrl = (url) => String(url ?? "").trim().replace(/\/+$/, "");
+const keyForProvider = (prov) => (prov === "openai" ? config.openaiKey : config.apiKey) || process.env[KEY_ENV[prov]] || null;
+const modelListKey = (prov, baseUrl) => `${prov}|${prov === "openai" ? normalizeBaseUrl(baseUrl) : ""}`;
+const cachedModels = (prov, baseUrl) => config.modelLists?.[modelListKey(prov, baseUrl)]?.models || [];
+function cacheModels(prov, baseUrl, models) {
+  const lists = { ...(config.modelLists || {}), [modelListKey(prov, baseUrl)]: { at: Date.now(), models: models.slice(0, 2000) } };
+  // Every server address tried keeps a list; keep only the 4 most recent.
+  config.modelLists = Object.fromEntries(Object.entries(lists).sort(([, a], [, b]) => (b.at || 0) - (a.at || 0)).slice(0, 4));
+  saveConfig();
+}
+function providerFrom(prov, baseUrl, key) {
+  return createProvider({ provider: prov, apiKey: key || null, baseUrl: prov === "openai" ? baseUrl : undefined });
+}
+// Refreshes a provider's list after its key or address changes. Background
+// only: a failure is logged, and the last good list stays in the dropdown.
+const modelRefresh = new Map();
+async function refreshModelList(prov = config.provider, baseUrl = config.openaiBaseUrl) {
+  const url = prov === "openai" ? normalizeBaseUrl(baseUrl) : "";
+  if (prov === "openai" && !validBaseUrl(url)) return;
+  // No key, no call (a local server needs none). Test mode only talks to localhost.
+  const local = prov === "openai" && isLocalUrl(url);
+  if (!local && (!keyForProvider(prov) || TEST_DIR)) return;
+  const key = modelListKey(prov, url);
+  const token = {};
+  modelRefresh.set(key, token);
+  try {
+    const models = await providerFrom(prov, url, keyForProvider(prov)).listModels({});
+    if (modelRefresh.get(key) !== token) return;
+    cacheModels(prov, url, models);
+    log(`models listed provider=${prov} count=${models.length}`);
+    broadcastState();
+  } catch (e) {
+    log(`models list failed provider=${prov}:`, e);
+  }
+}
+
 // API keys live in the login keychain via /usr/bin/security, so they survive
 // rebuilds that change the app's code signature. One entry per provider.
 const KEYCHAIN = { service: "com.glance.overlay.api-key", accounts: { anthropic: "glance", openai: "openai" } };
@@ -336,7 +376,10 @@ function state() {
     provider: config.provider,
     providers: Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label })),
     model: config.model,
-    models: Object.entries(ANTHROPIC_MODELS).map(([id, m]) => ({ id, name: m.name })),
+    models: Object.entries(ANTHROPIC_MODELS).map(([id, m]) => ({ id, name: m.name, input: m.price.input, output: m.price.output })),
+    // Depth only does something on Anthropic models that accept effort.
+    effortSupported: config.provider !== "openai" && supportsEffort(config.model),
+    modelOptions: cachedModels(config.provider, config.openaiBaseUrl),
     openaiBaseUrl: config.openaiBaseUrl,
     openaiModel: config.openaiModel,
     keyOptional: config.provider === "openai" && isLocalUrl(config.openaiBaseUrl),
@@ -1033,6 +1076,51 @@ ipcMain.handle("download-model", () => {
   if (speechTask || speech.status === "ready") return;
   startModelDownload(speech.model || "small.en", { retry: true });
 });
+// The provider form can list and test before anything is saved: an empty
+// key or base URL falls back to what's stored.
+ipcMain.handle("list-models", async (_e, options = {}) => {
+  const prov = options.provider in PROVIDERS ? options.provider : config.provider;
+  let url = normalizeBaseUrl(options.baseUrl);
+  if (prov === "openai") {
+    if (!url) url = config.openaiBaseUrl;
+    if (!validBaseUrl(url)) {
+      return { error: "The base URL should start with https:// (or http:// for a local server), like https://api.openai.com/v1." };
+    }
+  }
+  const key = String(options.key ?? "").trim() || keyForProvider(prov);
+  try {
+    const models = await providerFrom(prov, url, key).listModels({});
+    cacheModels(prov, url, models);
+    log(`models listed provider=${prov} count=${models.length}`);
+    broadcastState();
+    return { models };
+  } catch (e) {
+    log(`models list failed provider=${prov}:`, e);
+    return { error: e.message || String(e) };
+  }
+});
+ipcMain.handle("test-connection", async (_e, options = {}) => {
+  const prov = options.provider in PROVIDERS ? options.provider : config.provider;
+  let url = normalizeBaseUrl(options.baseUrl);
+  if (prov === "openai") {
+    if (!url) url = config.openaiBaseUrl;
+    if (!validBaseUrl(url)) {
+      return { error: "The base URL should start with https:// (or http:// for a local server), like https://api.openai.com/v1." };
+    }
+  }
+  const model = String(options.model ?? "").trim();
+  if (!model) return { error: "Choose a model first." };
+  const key = String(options.key ?? "").trim() || keyForProvider(prov);
+  const started = Date.now();
+  try {
+    const result = await providerFrom(prov, url, key).testConnection(model);
+    log(`test connection provider=${prov} model=${model} ok=true ms=${result.ms}`);
+    return result;
+  } catch (e) {
+    log(`test connection provider=${prov} model=${model} ok=false ms=${Date.now() - started}`);
+    return { error: e.message || String(e) };
+  }
+});
 // Saves the key for the current provider.
 ipcMain.handle("set-api-key", (_e, key) => {
   const value = String(key ?? "").trim() || null;
@@ -1041,31 +1129,39 @@ ipcMain.handle("set-api-key", (_e, key) => {
     send("notice", { level: "error", text: "That doesn't look like an Anthropic API key. Keys start with sk-ant-." });
     return broadcastState();
   }
+  let saved = false;
   try {
     writeKeychainKey(value, KEYCHAIN.accounts[config.provider]);
     config[anthropic ? "apiKey" : "openaiKey"] = value;
     llm = null;
+    saved = true;
   } catch (e) {
     send("notice", { level: "error", text: `Couldn't save the key: ${e.message}.` });
   }
   broadcastState();
+  if (saved) refreshModelList();
 });
 ipcMain.handle("set-setting", (_e, name, value) => {
   if (name === "setupActive") return void (setupActive = !!value);
-  if (name === "model" && value in ANTHROPIC_MODELS) config.model = value;
-  else if (name === "provider" && value in PROVIDERS) {
+  if (name === "model") {
+    const model = String(value ?? "").trim().slice(0, 200);
+    if (model) config.model = model;
+  } else if (name === "provider" && value in PROVIDERS) {
     config.provider = value;
     llm = null;
+    refreshModelList(value);
   } else if (name === "openaiBaseUrl") {
-    const url = String(value ?? "").trim().replace(/\/+$/, "");
-    if (!/^https?:\/\/\S+$/i.test(url)) {
+    const url = normalizeBaseUrl(value);
+    if (!validBaseUrl(url)) {
       send("notice", { level: "error", text: "The base URL should start with https:// (or http:// for a local server), like https://api.openai.com/v1." });
       return broadcastState();
     }
     config.openaiBaseUrl = url;
     llm = null;
+    refreshModelList("openai", url);
   } else if (name === "openaiModel") {
-    config.openaiModel = String(value ?? "").trim().slice(0, 200);
+    const model = String(value ?? "").trim().slice(0, 200);
+    if (model) config.openaiModel = model;
     llm = null;
   }
   else if (name === "effort" && ["low", "medium", "high"].includes(value)) config.effort = value;

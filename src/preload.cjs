@@ -17,6 +17,8 @@ contextBridge.exposeInMainWorld("glance", {
   toggleListening: () => ipcRenderer.invoke("toggle-listening"),
   downloadModel: () => ipcRenderer.invoke("download-model"),
   setApiKey: (key) => ipcRenderer.invoke("set-api-key", key),
+  listModels: (options) => ipcRenderer.invoke("list-models", options),
+  testConnection: (options) => ipcRenderer.invoke("test-connection", options),
   setSetting: (name, value) => ipcRenderer.invoke("set-setting", name, value),
   importDoc: (kind) => ipcRenderer.invoke("import-doc", kind),
   readClipboard: () => ipcRenderer.invoke("clipboard-read"),

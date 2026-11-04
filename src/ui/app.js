@@ -1,5 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const g = window.glance;
+// Wrapped so the UI tests can replace them without touching the bridge.
+let listModels = (params) => g.listModels(params);
+let testConnection = (params) => g.testConnection(params);
 
 let state = {};
 let heard = []; // transcript lines shown in this window
@@ -43,11 +46,6 @@ function meetingStyle() {
     return "brief";
   }
 }
-const MODEL_HINTS = {
-  "claude-opus-5-5": "Opus 5.5: most capable, $4 / $20 per million tokens",
-  "claude-sonnet-5-5": "Sonnet 5.5: nearly as good, half the price, answers start sooner",
-  "claude-haiku-5-5": "Haiku 5.5: fastest, about 1/40 of Opus's price",
-};
 let recording = null; // action whose shortcut is being recorded
 // Interview answers open in full, or as key points (Settings > Interview >
 // Open answers as key points). The link on an answer switches just that view.
@@ -134,6 +132,42 @@ function renderStrip() {
   }
 }
 
+// One model dropdown for both providers. The saved model is always shown,
+// even before its list has loaded (or when it isn't in the list).
+function renderSettingsModel() {
+  const current = (state.provider === "openai" ? state.openaiModel : state.model) || "";
+  // Anthropic before its list has loaded (no key yet, offline): the models
+  // Glance knows, so there's still a choice.
+  const fetched = state.modelOptions || [];
+  const models = fetched.length || state.provider === "openai" ? fetched : (state.models || []).map((m) => ({ id: m.id, name: `Claude ${m.name}` }));
+  const options = [];
+  if (current && !models.some((m) => m?.id === current)) options.push({ id: current, name: current });
+  for (const m of models) if (m?.id) options.push(m);
+  const select = $("settingsModel");
+  const signature = `${current}|${options.map((m) => `${m.id}\t${m.name || m.id}`).join("\n")}`;
+  if (signature !== renderSettingsModel.signature) {
+    renderSettingsModel.signature = signature;
+    select.innerHTML = options.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}</option>`).join("");
+  }
+  select.value = current;
+  $("modelHint").textContent = modelHint(current);
+}
+
+// What the Model row says under its name: the price for models Glance knows,
+// otherwise where the list comes from and that only tokens are counted.
+function modelHint(id) {
+  if (state.provider === "openai") {
+    let host = state.openaiBaseUrl || "";
+    try {
+      host = new URL(host).host;
+    } catch {}
+    return `From ${host || "your server"} · tokens counted, no prices`;
+  }
+  const known = (state.models || []).find((m) => m.id === id);
+  if (known) return `${known.name}: $${known.input} / $${known.output} per million tokens`;
+  return "Listed by Anthropic · tokens counted, no prices";
+}
+
 function renderMenu() {
   for (const b of $("settingsTabs").querySelectorAll("button")) b.setAttribute("aria-selected", String(b.dataset.tab === settingsTab));
   for (const t of document.querySelectorAll("#menu .tab")) t.hidden = t.dataset.tab !== settingsTab;
@@ -143,13 +177,8 @@ function renderMenu() {
   $("interviewOffNote").hidden = interview;
   $("cloakWarn").hidden = !!state.invisible;
   const openai = state.provider === "openai";
-  $("anthropicModelRow").hidden = openai;
-  $("effortRow").hidden = openai; // depth is an Anthropic setting
-  $("openaiModelRow").hidden = !openai;
-  $("openaiModelMeta").textContent = state.openaiModel || "not set";
-  $("openaiModelHint").textContent = `OpenAI-compatible, ${hostOf(state.openaiBaseUrl)}`;
-  for (const b of $("model").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.model));
-  $("modelHint").textContent = MODEL_HINTS[state.model] || "";
+  $("effortRow").hidden = openai || state.effortSupported === false; // Anthropic models that accept effort only
+  renderSettingsModel();
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
   $("compactToggle").setAttribute("aria-checked", String(!!state.compactAnswers));
@@ -249,6 +278,11 @@ function renderStage() {
   // Listening and screenshots wait for a key, like answers.
   document.body.classList.toggle("needs-key", !state.hasKey && !onb);
   $("keyForm").hidden = !needsKey;
+  if (!needsKey) {
+    keyFormOpen = false;
+    keyModelToken++;
+    clearTimeout(keyModelTimer);
+  }
   const changing = needsKey && state.hasKey;
   if (needsKey) renderKeyForm(changing);
   // Cancel whenever the form was opened from Settings; Remove only with a key.
@@ -659,24 +693,129 @@ $("askForm").addEventListener("submit", (e) => {
   e.preventDefault();
   submit({ form: true });
 });
-const hostOf = (url) => {
-  try {
-    return new URL(url).host;
-  } catch {
-    return url || "";
-  }
-};
 // The provider setup screen. Base URL and model fields are filled once each
 // time the form opens or the provider changes, so typing isn't overwritten.
 let keyFormFor = null;
+let keyFormOpen = false;
+let keyModelToken = 0;
+let keyModelTimer = null;
+let testToken = 0;
+
+function setModelStatus(kind, text) {
+  const el = $("keyModelStatus");
+  if (!kind) {
+    el.hidden = true;
+    el.className = "model-status";
+    el.textContent = "";
+    return;
+  }
+  el.hidden = false;
+  el.className = `model-status ${kind}`;
+  el.innerHTML = `${escapeHtml(text)}${kind === "error" ? ' <button type="button" class="textlink" id="keyModelRetry">Retry</button>' : ""}`;
+}
+
+function keyModelParams() {
+  const openai = state.provider === "openai";
+  return {
+    provider: state.provider,
+    baseUrl: openai ? $("keyBaseUrl").value.trim() || state.openaiBaseUrl || "" : "",
+    key: $("keyInput").value.trim(),
+  };
+}
+
+async function loadKeyModels({ delay = 0 } = {}) {
+  clearTimeout(keyModelTimer);
+  const run = async () => {
+    if (!keyFormOpen) return;
+    const params = keyModelParams();
+    if (params.provider === "openai" && !params.baseUrl) return setModelStatus();
+    // Anthropic lists models only for a key: wait for one instead of showing
+    // a "key rejected" error before anything was typed.
+    // Whether a key is saved (hasKey also needs a model, so it can't tell), and
+    // whether the server is local (Ollama, LM Studio), which needs none.
+    const keyless = !params.key && !state.keyHint;
+    const local = params.provider === "openai" && LOCAL_URL.test(params.baseUrl);
+    if (params.provider === "anthropic" && keyless) return setModelStatus("loading", "Paste your API key to load the models.");
+    // A key still being typed would only come back rejected.
+    if (params.provider === "anthropic" && params.key && !/^sk-ant-\S{30,}$/.test(params.key)) return setModelStatus("loading", "Paste your full API key to load the models.");
+    const token = ++keyModelToken;
+    setModelStatus("loading", "Loading models…");
+    let result;
+    try {
+      result = await listModels(params);
+    } catch (e) {
+      result = { error: e?.message || String(e) };
+    }
+    if (token !== keyModelToken || !keyFormOpen) return;
+    if (result?.error) {
+      // No key yet: a server that needs one isn't an error worth red text.
+      if (keyless && !local) return setModelStatus("loading", "Paste your API key to load the models.");
+      return setModelStatus("error", inForm(result.error));
+    }
+    const models = Array.isArray(result) ? result : result?.models || [];
+    $("keyModelList").innerHTML = models
+      .map((m) => `<option value="${escapeHtml(m.id)}"${m.name && m.name !== m.id ? ` label="${escapeHtml(m.name)}"` : ""}></option>`)
+      .join("");
+    setModelStatus();
+  };
+  if (delay) keyModelTimer = setTimeout(run, delay);
+  else run();
+}
+
+// Same rule as main's isLocalUrl: these servers need no API key.
+const LOCAL_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i;
+
+// Provider errors end with where to fix them ("Check it in Settings > Answers >
+// AI provider."). In this form that's where the user already is, so drop it.
+const inForm = (message) =>
+  String(message)
+    .replace(/Check the base URL in Settings > Answers > AI provider, and your connection\./g, "Check the server address and your connection.")
+    .replace(/\s*Check (?:it|both)[^.]*Settings > Answers > AI provider[^.]*\./g, "")
+    .trim() || String(message);
+
+function setTestStatus(kind, text) {
+  testToken++;
+  const el = $("testConnStatus");
+  el.className = `test-status${kind ? ` ${kind}` : ""}`;
+  $("testConnText").textContent = text;
+  $("testConnBtn").disabled = kind === "testing";
+}
+const resetTestStatus = () => setTestStatus("", "Not tested since your last change");
+
+async function testConnectionNow() {
+  const openai = state.provider === "openai";
+  const model = $("keyModel").value.trim() || (openai ? state.openaiModel : state.model);
+  if (!model) return setTestStatus("error", "Choose a model first.");
+  const params = {
+    provider: state.provider,
+    baseUrl: openai ? $("keyBaseUrl").value.trim() || state.openaiBaseUrl || "" : "",
+    model,
+    key: $("keyInput").value.trim(),
+  };
+  setTestStatus("testing", "Testing…");
+  const token = testToken;
+  let result;
+  try {
+    result = await testConnection(params);
+  } catch (e) {
+    result = { error: e?.message || String(e) };
+  }
+  if (token !== testToken) return; // a field changed while it ran
+  if (result?.ok) setTestStatus("ok", `Connected · ${model} replied in ${(result.ms / 1000).toFixed(1)} s`);
+  else setTestStatus("error", inForm(result?.error || "Couldn't connect."));
+}
+
 function renderKeyForm(changing) {
   const openai = state.provider === "openai";
+  keyFormOpen = true;
   for (const b of $("keyProvider").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.provider));
   $("openaiFields").hidden = !openai;
   if (keyFormFor !== state.provider) {
     keyFormFor = state.provider;
     $("keyBaseUrl").value = state.openaiBaseUrl || "";
-    $("keyModel").value = state.openaiModel || "";
+    $("keyModel").value = openai ? state.openaiModel || "" : state.model || "";
+    resetTestStatus();
+    loadKeyModels();
   }
   $("keyLead").textContent = changing
     ? `Change who answers${state.keyHint ? ` (current key ends in ${state.keyHint})` : ""}.`
@@ -684,25 +823,46 @@ function renderKeyForm(changing) {
   $("keyHint").textContent = openai
     ? "Works with any OpenAI-compatible API: OpenAI, Google Gemini, OpenRouter, Groq, Mistral, or a local Ollama or LM Studio (no key needed on localhost). Saved in your macOS keychain."
     : "Create one at console.anthropic.com. It's saved in your macOS keychain.";
-  $("keyInput").placeholder = openai ? (state.keyOptional ? "API key (optional for this local server)" : "API key") : "sk-ant-…";
+  const saved = !!state.keyHint || !!state.keyFromEnv;
+  $("keyInput").placeholder = saved ? "Saved · type a new key to replace it" : "Paste your API key";
 }
 $("keyProvider").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
-  if (v && v !== state.provider) g.setSetting("provider", v);
+  if (v && v !== state.provider) {
+    keyFormFor = null; // refill the fields for the new provider
+    resetTestStatus();
+    g.setSetting("provider", v);
+  }
 });
 $("keyForm").addEventListener("submit", (e) => {
   e.preventDefault();
   const key = $("keyInput").value.trim();
+  const model = $("keyModel").value.trim();
   if (state.provider === "openai") {
     const url = $("keyBaseUrl").value.trim();
-    const model = $("keyModel").value.trim();
     if (!model) return showNotice({ level: "error", text: "Enter the model name, for example gpt-4o, gemini-2.5-pro or llama3.1." });
     if (url !== state.openaiBaseUrl) g.setSetting("openaiBaseUrl", url);
     if (model !== state.openaiModel) g.setSetting("openaiModel", model);
-  } else if (!key && !state.keyHint) return;
+  } else {
+    if (model && model !== state.model) g.setSetting("model", model);
+    if (!key && !state.keyHint) return;
+  }
   if (key) g.setApiKey(key);
   closePanel();
 });
+$("keyBaseUrl").addEventListener("input", () => {
+  resetTestStatus();
+  loadKeyModels({ delay: 600 });
+});
+$("keyInput").addEventListener("input", () => {
+  resetTestStatus();
+  loadKeyModels({ delay: 600 });
+});
+$("keyModel").addEventListener("input", resetTestStatus);
+$("keyModelStatus").addEventListener("click", (e) => {
+  if (e.target.closest("#keyModelRetry")) loadKeyModels();
+});
+$("testConnBtn").addEventListener("click", testConnectionNow);
 $("cancelKeyBtn").addEventListener("click", closePanel);
 // With no key left, the key form stays up until a new one is saved.
 $("removeKeyBtn").addEventListener("click", () => {
@@ -795,9 +955,30 @@ $("saidForm").addEventListener("submit", (e) => {
   }
   renderStage();
 });
-$("model").addEventListener("click", (e) => {
-  const v = e.target.closest("button")?.dataset.value;
-  if (v) g.setSetting("model", v);
+$("settingsModel").addEventListener("change", () => {
+  const v = $("settingsModel").value;
+  if (v) g.setSetting(state.provider === "openai" ? "openaiModel" : "model", v);
+});
+$("refreshModelsBtn").addEventListener("click", async () => {
+  const btn = $("refreshModelsBtn");
+  if (btn.disabled) return;
+  const openai = state.provider === "openai";
+  btn.disabled = true;
+  btn.textContent = "Refreshing…";
+  let result;
+  try {
+    result = await listModels({ provider: state.provider, baseUrl: openai ? state.openaiBaseUrl : "", key: "" });
+  } catch (e) {
+    result = { error: e?.message || String(e) };
+  }
+  btn.disabled = false;
+  if (result?.error) {
+    btn.textContent = "Refresh";
+    return showNotice({ level: "error", text: result.error });
+  }
+  const count = (Array.isArray(result) ? result : result?.models || []).length;
+  btn.textContent = `${count} model${count === 1 ? "" : "s"}`;
+  setTimeout(() => (btn.textContent = "Refresh"), 2500);
 });
 $("effort").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
@@ -981,7 +1162,6 @@ $("instructionsClear").addEventListener("click", () => {
   updateInstructionsCount();
   $("instructionsInput").focus();
 });
-$("openaiModelRow").addEventListener("click", () => $("keyBtn").click());
 $("keyBtn").addEventListener("click", () => {
   keyFormFor = null;
   openPanel("key");

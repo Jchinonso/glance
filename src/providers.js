@@ -22,7 +22,26 @@ export const DEFAULT_ANTHROPIC_MODEL = "claude-sonnet-5-5";
 // Compressing custom instructions happens once and must keep every fact.
 export const MOST_CAPABLE_ANTHROPIC_MODEL = "claude-opus-5-5";
 
+const LIST_TIMEOUT_MS = 15000;
 const text = (blocks) => blocks.filter((b) => b.type === "text").map((b) => b.text).join("");
+
+// Fetches with a timeout, still honouring the caller's signal.
+function aborter(signal, ms = LIST_TIMEOUT_MS) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), ms);
+  const relay = () => controller.abort();
+  if (signal) {
+    if (signal.aborted) controller.abort();
+    else signal.addEventListener("abort", relay, { once: true });
+  }
+  return {
+    signal: controller.signal,
+    done() {
+      clearTimeout(timer);
+      signal?.removeEventListener?.("abort", relay);
+    },
+  };
+}
 
 // Turns thinking off at Quick effort where the model allows it. Sonnet's only
 // way is "between_tools", which must be sent alone; Haiku takes "disabled".
@@ -37,12 +56,28 @@ export function thinkingFor(model, effort, think = false) {
   return undefined;
 }
 
+// Effort (Depth) is accepted by Opus 4.5 and later, Sonnet 4.6 and later,
+// Haiku 5.5 and later, and the Fable and Mythos models. Older models picked
+// from the Models API (Haiku 4.5, Sonnet 4.5, Claude 3…) reject it with a 400,
+// so it's left out for them and they answer at their normal depth.
+export function supportsEffort(model) {
+  return /^claude-(opus-(4-[5-9]|[5-9])|sonnet-(4-[6-9]|[5-9])|haiku-[5-9]|fable|mythos)/.test(String(model || ""));
+}
+const effortFor = (model, effort) => (effort && supportsEffort(model) ? { output_config: { effort } } : {});
+
 // anthropicBaseUrl: optional, for a proxy or gateway (and tests).
 function anthropic({ apiKey, anthropicBaseUrl }) {
   const client = new Anthropic({ ...(apiKey ? { apiKey } : {}), ...(anthropicBaseUrl ? { baseURL: anthropicBaseUrl, maxRetries: 0 } : {}) });
   // Off for the session once the account turns out not to have the feature.
   let fallbackOk = true;
-  const known = (model) => (model in ANTHROPIC_MODELS ? model : DEFAULT_ANTHROPIC_MODEL);
+  // Display names learned from the Models API, for IDs outside the price table.
+  const displayNames = new Map();
+  const idOf = (model) => model || DEFAULT_ANTHROPIC_MODEL;
+  const label = (model) => {
+    const id = idOf(model);
+    const known = ANTHROPIC_MODELS[id];
+    return known ? `Claude ${known.name}` : displayNames.get(id) || id;
+  };
   const usage = (u = {}) => ({ input: u.input_tokens || 0, output: u.output_tokens || 0, cacheRead: u.cache_read_input_tokens || 0, cacheWrite: u.cache_creation_input_tokens || 0 });
   const result = (msg) => ({
     text: text(msg.content),
@@ -50,27 +85,72 @@ function anthropic({ apiKey, anthropicBaseUrl }) {
     stop: msg.stop_reason === "refusal" ? "refusal" : msg.stop_reason === "max_tokens" ? "max_tokens" : "end",
     refusal: msg.stop_details?.category || null,
   });
+  const describe = (e, model) => {
+    const name = label(model);
+    const t = String(e?.message || e);
+    if (e instanceof Anthropic.AuthenticationError) return "Your API key was rejected. Check it in Settings > Answers > AI provider.";
+    if (e instanceof Anthropic.PermissionDeniedError) return `This API key isn't allowed to use ${name}. Check its workspace permissions in the Anthropic console.`;
+    if (e instanceof Anthropic.NotFoundError) return `${name} isn't available to this API key's organization. Try another model in Settings > Answers.`;
+    if (e instanceof Anthropic.RateLimitError) return "Too many requests right now. Wait a few seconds and ask again.";
+    if (e?.status === 402 || /credit balance/i.test(t)) return "Your Anthropic account is out of credit. Add some at console.anthropic.com > Billing.";
+    if (e?.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
+    if (e instanceof Anthropic.BadRequestError) return `Claude couldn't process this request: ${e.error?.error?.message || t}`;
+    if (e instanceof Anthropic.InternalServerError) return "Anthropic's service is busy or having trouble. Try again in a moment.";
+    if (e instanceof Anthropic.APIConnectionError) return "Can't reach Anthropic. Check your internet connection.";
+    if (e?.name === "AbortError" || e?.name === "TimeoutError") return "Anthropic took too long to answer. Check your connection and try again.";
+    return null;
+  };
 
   return {
-    name: (model) => `Claude ${ANTHROPIC_MODELS[known(model)].name}`,
+    name: (model) => {
+      const id = idOf(model);
+      const known = ANTHROPIC_MODELS[id];
+      return known ? `Claude ${known.name}` : displayNames.get(id) || id;
+    },
     cost(u, model) {
-      const p = ANTHROPIC_MODELS[known(model)].price;
+      const known = ANTHROPIC_MODELS[idOf(model)];
+      if (!known) return null; // prices unknown: show tokens only
+      const p = known.price;
       return (u.input * p.input + u.output * p.output + u.cacheWrite * p.cacheWrite + u.cacheRead * p.cacheRead) / 1e6;
     },
+    async listModels({ signal } = {}) {
+      try {
+        const models = [];
+        for await (const item of client.models.list({}, { signal, timeout: LIST_TIMEOUT_MS, maxRetries: 0 })) {
+          const id = String(item.id);
+          const name = item.display_name || id;
+          displayNames.set(id, name);
+          models.push({ id, name });
+        }
+        return models.sort((a, b) => a.id.localeCompare(b.id));
+      } catch (e) {
+        throw new Error(describe(e) || String(e?.message || e));
+      }
+    },
+    async testConnection(model) {
+      const started = Date.now();
+      try {
+        // No effort or thinking settings: the smallest request every model accepts.
+        await client.messages.create({ model: idOf(model), max_tokens: 1, messages: [{ role: "user", content: "Hi" }] }, { timeout: LIST_TIMEOUT_MS, maxRetries: 0 });
+        return { ok: true, ms: Date.now() - started };
+      } catch (e) {
+        throw new Error(describe(e, model) || String(e?.message || e));
+      }
+    },
     stream({ model, system, parts, maxTokens, effort, think, onText }) {
-      model = known(model);
+      model = idOf(model);
       const thinking = thinkingFor(model, effort, think);
       const content = parts.map((p) => (p.type === "image" ? { type: "image", source: { type: "base64", media_type: "image/jpeg", data: p.data } } : p));
       let current = null;
       let streamed = false;
       const start = () => {
-        const useFallback = fallbackOk && ANTHROPIC_MODELS[model].fallback;
+        const useFallback = fallbackOk && !!ANTHROPIC_MODELS[model]?.fallback;
         current = client.beta.messages.stream({
           model,
           max_tokens: maxTokens,
           // Server-side fallback re-runs a refused request on another model.
           ...(useFallback ? { betas: ["server-side-fallback-2026-07-01"], fallbacks: "default" } : {}),
-          output_config: { effort },
+          ...effortFor(model, effort),
           ...(thinking ? { thinking } : {}),
           // Identical across questions until a setting changes, so cached:
           // 1-hour lifetime; repeats within an hour read it at 0.1x.
@@ -96,38 +176,25 @@ function anthropic({ apiKey, anthropicBaseUrl }) {
     async complete({ model, system, user, maxTokens, effort }) {
       // Streamed even though only the end result is used: the SDK prefers
       // streaming for long outputs.
-      const msg = await client.messages.stream({ model: known(model), max_tokens: maxTokens, output_config: { effort }, system, messages: [{ role: "user", content: user }] }).finalMessage();
+      const msg = await client.messages.stream({ model: idOf(model), max_tokens: maxTokens, ...effortFor(idOf(model), effort), system, messages: [{ role: "user", content: user }] }).finalMessage();
       return result(msg);
     },
     // Writes the system-prompt cache before a question is asked. Not streamed:
     // max_tokens 0 is rejected with stream: true. There are no output tokens.
     async prewarm({ model, system, effort }) {
-      model = known(model);
+      model = idOf(model);
       const thinking = thinkingFor(model, effort);
       const msg = await client.messages.create({
         model,
         max_tokens: 0,
-        output_config: { effort },
+        ...effortFor(model, effort),
         ...(thinking ? { thinking } : {}),
         system: [{ type: "text", text: system, cache_control: { type: "ephemeral", ttl: "1h" } }],
         messages: [{ role: "user", content: "." }],
       });
       return usage(msg.usage);
     },
-    describeError(e, model) {
-      const name = `Claude ${ANTHROPIC_MODELS[known(model)].name}`;
-      const t = String(e?.message || e);
-      if (e instanceof Anthropic.AuthenticationError) return "Your API key was rejected. Check it in Settings > Answers > AI provider.";
-      if (e instanceof Anthropic.PermissionDeniedError) return `This API key isn't allowed to use ${name}. Check its workspace permissions in the Anthropic console.`;
-      if (e instanceof Anthropic.NotFoundError) return `${name} isn't available to this API key's organization. Try another model in Settings > Answers.`;
-      if (e instanceof Anthropic.RateLimitError) return "Too many requests right now. Wait a few seconds and ask again.";
-      if (e?.status === 402 || /credit balance/i.test(t)) return "Your Anthropic account is out of credit. Add some at console.anthropic.com > Billing.";
-      if (e?.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
-      if (e instanceof Anthropic.BadRequestError) return `Claude couldn't process this request: ${e.error?.error?.message || t}`;
-      if (e instanceof Anthropic.InternalServerError) return "Anthropic's service is busy or having trouble. Try again in a moment.";
-      if (e instanceof Anthropic.APIConnectionError) return "Can't reach Anthropic. Check your internet connection.";
-      return null;
-    },
+    describeError: describe,
   };
 }
 
@@ -141,8 +208,14 @@ class HttpError extends Error {
   }
 }
 
+// Models a /models list can include that can't answer a chat request
+// (OpenAI's own list has embeddings, speech, transcription and image models),
+// or not in real time (OpenRouter's ":batch" variants answer hours later).
+const NOT_CHAT = /(^|[/:-])(text-)?embed|whisper|(^|[/-])tts|dall-e|moderation|transcribe|(^|[/-])gpt-image|realtime|(^|[/-])audio|(^|[/-])ocr|davinci-002|babbage-002|:batch$/i;
+
 function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
-  const url = `${String(baseUrl || "").replace(/\/+$/, "")}/chat/completions`;
+  const root = String(baseUrl || "").replace(/\/+$/, "");
+  const url = `${root}/chat/completions`;
   const headers = { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
   const usage = (u = {}) => ({ input: u.prompt_tokens || 0, output: u.completion_tokens || 0, cacheRead: u.prompt_tokens_details?.cached_tokens || 0, cacheWrite: 0 });
   const stopOf = (reason) => (reason === "length" ? "max_tokens" : reason === "content_filter" ? "refusal" : "end");
@@ -173,10 +246,73 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
       return withLimit();
     }
   };
+  const describe = (e, model) => {
+    const host = (() => {
+      try {
+        return new URL(baseUrl).host;
+      } catch {
+        return baseUrl || "the server";
+      }
+    })();
+    if (e instanceof TypeError && /fetch|url/i.test(String(e.message))) return `Can't reach ${host}. Check the base URL in Settings > Answers > AI provider, and your connection.`;
+    if (e?.name === "AbortError" || e?.name === "TimeoutError") return `Timed out waiting for ${host}. Check the base URL in Settings > Answers > AI provider, and your connection.`;
+    if (!(e instanceof HttpError)) return null;
+    if (e.status === 401) return `${host} rejected the API key. Check it in Settings > Answers > AI provider.`;
+    if (e.status === 403) return `This API key isn't allowed to use ${model || defaultModel} on ${host}.`;
+    if (e.status === 404) return `${host} doesn't have a model called "${model || defaultModel}", or the base URL is wrong. Check both in Settings > Answers > AI provider.`;
+    if (e.status === 429) return `${host} is rate limiting or out of quota. Wait a moment, or check your plan.`;
+    if (e.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
+    // Text-only models refuse screenshots.
+    if (e.status === 400 && /image|vision|multimodal/i.test(e.message)) return `${model || defaultModel} can't read screenshots. Turn off Settings > Answers > Screenshot every question, or use a model that reads images.`;
+    if (e.status >= 500) return `${host} is having trouble (${e.status}). Try again in a moment.`;
+    return `${host} couldn't process this request: ${e.message}`;
+  };
 
   return {
     name: (model) => model || defaultModel,
     cost: () => null,
+    async listModels({ signal } = {}) {
+      const abort = aborter(signal);
+      try {
+        const res = await fetch(`${root}/models`, { method: "GET", headers: apiKey ? { authorization: `Bearer ${apiKey}` } : {}, signal: abort.signal });
+        if (!res.ok) {
+          const detail = await res.text().catch(() => "");
+          let message = detail;
+          try {
+            message = JSON.parse(detail).error?.message || detail;
+          } catch {}
+          throw new HttpError(res.status, message.slice(0, 300) || res.statusText);
+        }
+        const json = await res.json();
+        const items = Array.isArray(json?.data) ? json.data : [];
+        // Gemini's OpenAI-compatible endpoint lists "models/gemini-2.5-flash",
+        // but chat requests name the model without that prefix.
+        const gemini = /generativelanguage\.googleapis\.com/i.test(root);
+        return items
+          .map((item) => {
+            const id = String(item.id ?? "").replace(gemini ? /^models\// : /^$/, "");
+            return { id, name: item.name || item.display_name || id };
+          })
+          .filter((item) => item.id && !NOT_CHAT.test(item.id))
+          .sort((a, b) => a.id.localeCompare(b.id));
+      } catch (e) {
+        throw new Error(describe(e) || String(e?.message || e));
+      } finally {
+        abort.done();
+      }
+    },
+    async testConnection(model) {
+      const started = Date.now();
+      const abort = aborter();
+      try {
+        await sendLimited({ model: model || defaultModel, messages: [{ role: "user", content: "Hi" }] }, 1, abort.signal);
+        return { ok: true, ms: Date.now() - started };
+      } catch (e) {
+        throw new Error(describe(e, model) || String(e?.message || e));
+      } finally {
+        abort.done();
+      }
+    },
     stream({ model, system, parts, maxTokens, onText }) {
       const controller = new AbortController();
       const content = parts.map((p) => (p.type === "image" ? { type: "image_url", image_url: { url: `data:image/jpeg;base64,${p.data}` } } : p));
@@ -234,26 +370,7 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
     async prewarm() {
       return null;
     },
-    describeError(e, model) {
-      const host = (() => {
-        try {
-          return new URL(baseUrl).host;
-        } catch {
-          return baseUrl || "the server";
-        }
-      })();
-      if (e instanceof TypeError && /fetch|url/i.test(String(e.message))) return `Can't reach ${host}. Check the base URL in Settings > Answers > AI provider, and your connection.`;
-      if (!(e instanceof HttpError)) return null;
-      if (e.status === 401) return `${host} rejected the API key. Check it in Settings > Answers > AI provider.`;
-      if (e.status === 403) return `This API key isn't allowed to use ${model || defaultModel} on ${host}.`;
-      if (e.status === 404) return `${host} doesn't have a model called "${model || defaultModel}", or the base URL is wrong. Check both in Settings > Answers > AI provider.`;
-      if (e.status === 429) return `${host} is rate limiting or out of quota. Wait a moment, or check your plan.`;
-      if (e.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
-      // Text-only models refuse screenshots.
-      if (e.status === 400 && /image|vision|multimodal/i.test(e.message)) return `${model || defaultModel} can't read screenshots. Turn off Settings > Answers > Screenshot every question, or use a model that reads images.`;
-      if (e.status >= 500) return `${host} is having trouble (${e.status}). Try again in a moment.`;
-      return `${host} couldn't process this request: ${e.message}`;
-    },
+    describeError: describe,
   };
 }
 
