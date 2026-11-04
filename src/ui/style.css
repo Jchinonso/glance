@@ -625,16 +625,43 @@ input:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-h
 .conn-card input { height: 36px; border-radius: 10px; border: 1px solid var(--edge); background: var(--well-deep); }
 .conn-card input:focus { border-color: color-mix(in srgb, var(--ice) 55%, transparent); background: var(--well-deep); }
 .conn-card + .hint { margin-top: 10px; }
-/* The model box is a dropdown: a chevron always shows, and the native list
-   button sits invisibly on top of it so clicking the chevron opens the list. */
-.conn-card input[list] {
-  padding-right: 34px;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 20 20' fill='none' stroke='%238d9aa9' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5.5 8 10 12.5 14.5 8'/%3E%3C/svg%3E");
-  background-repeat: no-repeat;
-  background-position: right 12px center;
-  background-size: 14px;
+/* The Model box: a searchable dropdown. The list opens in place (not floating)
+   so the window grows to fit it instead of cutting it off at the bottom. */
+.combo-field { display: flex; flex-direction: column; gap: 4px; min-width: 0; color: var(--dim); font-size: 12px; }
+.combo { position: relative; min-width: 0; }
+.combo input { width: 100%; padding-right: 36px; }
+.combo-toggle {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: none;
+  color: var(--dim);
 }
-.conn-card input[list]::-webkit-calendar-picker-indicator { opacity: 0; cursor: pointer; }
+.combo-toggle:hover { background: var(--raise-hover); color: var(--text); }
+.combo-toggle svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+.combo-list {
+  max-height: 240px;
+  margin: 4px 0 0;
+  padding: 4px;
+  overflow-y: auto;
+  list-style: none;
+  border: 1px solid var(--edge);
+  border-radius: 10px;
+  background: var(--menu);
+}
+.combo-list li { display: flex; flex-direction: column; gap: 1px; padding: 6px 8px; border-radius: 6px; color: var(--text); font-size: 13px; cursor: pointer; }
+.combo-list li.active, .combo-list li[data-i]:hover { background: var(--raise-hover); }
+.combo-list li[aria-selected="true"] .combo-id { color: var(--ice); font-weight: 600; }
+.combo-id { overflow-wrap: anywhere; }
+.combo-name { color: var(--dim); font-size: 11px; }
+.combo-list .combo-empty { color: var(--dim); cursor: default; }
 .test-row { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; margin-top: 16px; }
 .test-btn {
   height: 32px;
@@ -656,14 +683,19 @@ input:focus { border-color: rgba(143, 211, 255, 0.35); background: var(--raise-h
 .test-status.error .dot { background: var(--alert); }
 .test-status.testing .dot { background: var(--ice); animation: breathe 1.4s ease-in-out infinite; }
 .model-picker { display: flex; align-items: center; gap: 8px; flex: none; min-width: 0; }
-.model-picker select { max-width: 230px; height: 32px; padding: 0 8px; border: 1px solid transparent; border-radius: 8px; background: var(--raise); color: var(--text); outline: none; }
-.model-picker select:focus { border-color: rgba(143, 211, 255, 0.35); }
+/* Settings' model dropdown: a compact box; its list spans the whole row. */
+.model-row { flex-wrap: wrap; }
+.model-row .row-text { flex: 1 1 0; min-width: 0; }
+.combo-compact input { width: 230px; height: 32px; padding: 0 34px 0 10px; border: 1px solid transparent; border-radius: 8px; background: var(--raise); color: var(--text); }
+.combo-compact input:focus { border-color: rgba(143, 211, 255, 0.35); }
+.combo-compact .combo-toggle { top: 2px; right: 2px; }
+.model-row-list { flex-basis: 100%; width: 100%; margin-top: 8px; }
 .model-picker .textlink { padding: 2px 0; color: var(--ice); font-size: 12px; font-weight: 600; }
 
 @media (max-width: 470px) {
   .provider-cards,
   .keyfields-row { grid-template-columns: 1fr; }
-  .model-picker select { max-width: 150px; }
+  .combo-compact input { width: 150px; }
 }
 
 /* Settings tabs: one job per tab, so each fits without much scrolling. */

@@ -132,6 +132,8 @@ function renderStrip() {
   }
 }
 
+let settingsModels = []; // what Settings' model dropdown lists (see makeCombo)
+let settingsCombo = null;
 // One model dropdown for both providers. The saved model is always shown,
 // even before its list has loaded (or when it isn't in the list).
 function renderSettingsModel() {
@@ -140,29 +142,28 @@ function renderSettingsModel() {
   // Glance knows, so there's still a choice.
   const fetched = state.modelOptions || [];
   const models = fetched.length || state.provider === "openai" ? fetched : (state.models || []).map((m) => ({ id: m.id, name: `Claude ${m.name}` }));
-  const options = [];
-  if (current && !models.some((m) => m?.id === current)) options.push({ id: current, name: current });
-  for (const m of models) if (m?.id) options.push(m);
-  const select = $("settingsModel");
-  const signature = `${current}|${options.map((m) => `${m.id}\t${m.name || m.id}`).join("\n")}`;
-  if (signature !== renderSettingsModel.signature) {
-    renderSettingsModel.signature = signature;
-    select.innerHTML = options.map((m) => `<option value="${escapeHtml(m.id)}">${escapeHtml(m.name || m.id)}</option>`).join("");
-  }
-  select.value = current;
-  $("modelHint").textContent = modelHint(current);
+  settingsModels = models.filter((m) => m?.id);
+  // The chosen model shows in the box unless it's being searched.
+  if (document.activeElement !== $("settingsModel")) $("settingsModel").value = current;
+  settingsCombo?.refresh();
+  const hint = modelHint(current);
+  $("modelHint").textContent = hint;
+  $("modelHint").classList.toggle("caution", hint.endsWith("Choose a model."));
 }
 
 // What the Model row says under its name: the price for models Glance knows,
 // otherwise where the list comes from and that only tokens are counted.
 function modelHint(id) {
-  if (state.provider === "openai") {
-    let host = state.openaiBaseUrl || "";
-    try {
-      host = new URL(host).host;
-    } catch {}
-    return `From ${host || "your server"} · tokens counted, no prices`;
-  }
+  const openai = state.provider === "openai";
+  let host = openai ? state.openaiBaseUrl || "" : "Anthropic";
+  try {
+    if (openai) host = new URL(host).host;
+  } catch {}
+  // The saved model isn't on the provider's list (e.g. "gpt-5" saved for
+  // api.openai.com, but the server is now OpenRouter): answers would fail.
+  const listed = state.modelOptions || [];
+  if (id && listed.length && !listed.some((m) => m.id === id)) return `${id} isn't listed by ${host || "your server"}. Choose a model.`;
+  if (openai) return `From ${host || "your server"} · tokens counted, no prices`;
   const known = (state.models || []).find((m) => m.id === id);
   if (known) return `${known.name}: $${known.input} / $${known.output} per million tokens`;
   return "Listed by Anthropic · tokens counted, no prices";
@@ -280,6 +281,7 @@ function renderStage() {
   $("keyForm").hidden = !needsKey;
   if (!needsKey) {
     keyFormOpen = false;
+    keyCombo?.close();
     keyModelToken++;
     clearTimeout(keyModelTimer);
   }
@@ -697,6 +699,9 @@ $("askForm").addEventListener("submit", (e) => {
 // time the form opens or the provider changes, so typing isn't overwritten.
 let keyFormFor = null;
 let keyFormOpen = false;
+// The provider form's model list, and its dropdown (see makeCombo).
+let keyModels = [];
+let keyCombo = null;
 let keyModelToken = 0;
 let keyModelTimer = null;
 let testToken = 0;
@@ -714,11 +719,19 @@ function setModelStatus(kind, text) {
   el.innerHTML = `${escapeHtml(text)}${kind === "error" ? ' <button type="button" class="textlink" id="keyModelRetry">Retry</button>' : ""}`;
 }
 
+// The address as the server sees it: a bare "api.openai.com" becomes
+// https://api.openai.com/v1. What can't be an address stays as typed, so
+// main reports it.
+function keyBaseUrlValue() {
+  const typed = $("keyBaseUrl").value.trim();
+  return typed ? normalizeBaseUrl(typed) || typed : state.openaiBaseUrl || "";
+}
+
 function keyModelParams() {
   const openai = state.provider === "openai";
   return {
     provider: state.provider,
-    baseUrl: openai ? $("keyBaseUrl").value.trim() || state.openaiBaseUrl || "" : "",
+    baseUrl: openai ? keyBaseUrlValue() : "",
     key: $("keyInput").value.trim(),
   };
 }
@@ -752,15 +765,173 @@ async function loadKeyModels({ delay = 0 } = {}) {
       if (keyless && !local) return setModelStatus("loading", "Paste your API key to load the models.");
       return setModelStatus("error", inForm(result.error));
     }
-    const models = Array.isArray(result) ? result : result?.models || [];
-    $("keyModelList").innerHTML = models
-      .map((m) => `<option value="${escapeHtml(m.id)}"${m.name && m.name !== m.id ? ` label="${escapeHtml(m.name)}"` : ""}></option>`)
-      .join("");
+    keyModels = Array.isArray(result) ? result : result?.models || [];
+    keyCombo?.refresh();
     setModelStatus();
+    matchModelToList(params);
   };
   if (delay) keyModelTimer = setTimeout(run, delay);
   else run();
 }
+
+// A searchable model dropdown, used by the provider form and Settings. The
+// chevron opens every model; typing filters by ID or name. (A <datalist>
+// filters by what's already in the box, so with "gpt-5" typed the rest of the
+// list could never be reached.) The list opens in place, so the window grows
+// to fit it instead of cutting it off.
+//   models(): [{ id, name }]   current(): the chosen ID   pick(id): chosen
+//   revertOnBlur: put the current model back if the box is left unpicked
+const COMBO_MAX = 500; // OpenRouter lists about 380; more would only slow the list down
+function makeCombo({ input, toggle, list, models, current, pick, revertOnBlur = false, emptyText }) {
+  let open = false;
+  let filter = "";
+  let active = -1;
+  let shown = [];
+  const optId = (i) => `${list.id}Opt${i}`;
+  const matches = () => {
+    const terms = filter.toLowerCase().split(/\s+/).filter(Boolean);
+    const all = models();
+    const hits = terms.length ? all.filter((m) => terms.every((t) => m.id.toLowerCase().includes(t) || (m.name || "").toLowerCase().includes(t))) : all;
+    return hits.slice(0, COMBO_MAX);
+  };
+  function render() {
+    shown = matches();
+    const cur = current();
+    if (active >= shown.length) active = shown.length - 1;
+    list.innerHTML = shown.length
+      ? shown
+          .map(
+            (m, i) =>
+              `<li role="option" id="${optId(i)}" data-i="${i}" aria-selected="${m.id === cur}"${i === active ? ' class="active"' : ""}><span class="combo-id">${escapeHtml(m.id)}</span>${m.name && m.name !== m.id ? `<span class="combo-name">${escapeHtml(m.name)}</span>` : ""}</li>`,
+          )
+          .join("")
+      : `<li class="combo-empty">${models().length ? "No model matches. Press Enter to use what you typed." : emptyText || "No models listed yet. Type a model ID."}</li>`;
+    if (active >= 0) input.setAttribute("aria-activedescendant", optId(active));
+    else input.removeAttribute("aria-activedescendant");
+    list.querySelector(".active")?.scrollIntoView({ block: "nearest" });
+  }
+  function show({ showAll = false } = {}) {
+    filter = showAll ? "" : input.value.trim();
+    open = true;
+    active = showAll ? matches().findIndex((m) => m.id === current()) : -1;
+    list.hidden = false;
+    input.setAttribute("aria-expanded", "true");
+    render();
+    // Opened on the chosen model: show it, not the top of a long list.
+    if (active >= 0) list.querySelector(".active")?.scrollIntoView({ block: "center" });
+  }
+  function close({ revert = revertOnBlur } = {}) {
+    if (!open && !revert) return;
+    open = false;
+    active = -1;
+    list.hidden = true;
+    input.setAttribute("aria-expanded", "false");
+    input.removeAttribute("aria-activedescendant");
+    if (revert) input.value = current();
+  }
+  function choose(id) {
+    input.value = id;
+    close({ revert: false });
+    pick(id);
+  }
+  toggle.addEventListener("mousedown", (e) => e.preventDefault()); // keep focus in the box
+  toggle.addEventListener("click", () => {
+    if (open) return close();
+    input.focus();
+    if (revertOnBlur) input.select();
+    show({ showAll: true });
+  });
+  list.addEventListener("mousedown", (e) => e.preventDefault());
+  list.addEventListener("click", (e) => {
+    const li = e.target.closest("li[data-i]");
+    if (li) choose(shown[Number(li.dataset.i)].id);
+  });
+  input.addEventListener("input", () => {
+    filter = input.value.trim();
+    active = -1;
+    if (!open) show();
+    else render();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      if (!open) return show({ showAll: !filter });
+      const n = shown.length;
+      if (!n) return;
+      active = e.key === "ArrowDown" ? (active + 1) % n : (active - 1 + n) % n;
+      render();
+    } else if (e.key === "Enter" && open) {
+      // The highlighted model; with none highlighted, what was typed.
+      e.preventDefault();
+      if (active >= 0) choose(shown[active].id);
+      else if (input.value.trim()) choose(input.value.trim());
+      else close();
+    } else if (e.key === "Escape" && open) {
+      e.preventDefault();
+      e.stopPropagation();
+      close();
+    }
+  });
+  input.addEventListener("blur", () => close());
+  return { close: () => close({ revert: false }), refresh: () => open && render(), isOpen: () => open };
+}
+
+keyCombo = makeCombo({
+  input: $("keyModel"),
+  toggle: $("keyModelToggle"),
+  list: $("keyModelList"),
+  models: () => keyModels,
+  current: () => $("keyModel").value.trim(),
+  pick: () => {
+    keyModelTyped = true; // chosen by the user: a later list load leaves it alone
+    resetTestStatus();
+  },
+});
+
+// After a server's list loads, the model filled in from settings may not be
+// on it: "gpt-5" saved for api.openai.com is "openai/gpt-5" on OpenRouter.
+// One listed model with that name under a prefix: switch to it and say so.
+// None: clear the box so a model is chosen from the list. A model the user
+// typed themselves is left alone.
+let keyModelTyped = false;
+function matchModelToList(params) {
+  const box = $("keyModel");
+  const v = box.value.trim();
+  if (keyModelTyped || !v || !keyModels.length || keyModels.some((m) => m.id === v)) return;
+  const host = hostOf(params.baseUrl) || (params.provider === "anthropic" ? "Anthropic" : "this server");
+  // Both ways: "gpt-5" -> "openai/gpt-5" (OpenRouter), "openai/gpt-5" -> "gpt-5" (OpenAI).
+  const bare = v.includes("/") ? v.slice(v.lastIndexOf("/") + 1) : null;
+  const same = keyModels.filter((m) => m.id.endsWith(`/${v}`) || (bare && (m.id === bare || m.id.endsWith(`/${bare}`))));
+  if (same.length === 1) {
+    box.value = same[0].id;
+    setModelStatus("loading", `Changed to ${same[0].id}, the name ${host} uses for ${v}.`);
+  } else {
+    box.value = "";
+    setModelStatus("loading", `${v} isn't listed by ${host}. Choose one from the list.`);
+  }
+  resetTestStatus();
+}
+// The address changed: rename the model by rule, without waiting for (or
+// needing) the new server's list. matchModelToList still has the final say.
+function renameModelNow() {
+  if (!keyFormOpen || keyModelTyped || state.provider !== "openai") return;
+  const url = keyBaseUrlValue();
+  const box = $("keyModel");
+  const v = box.value.trim();
+  if (!url || !v) return;
+  const next = renameModelForServer(v, url);
+  if (!next || next === v) return;
+  box.value = next;
+  setModelStatus("loading", `Changed to ${next}, the name ${hostOf(url)} uses for ${v}.`);
+  resetTestStatus();
+}
+const hostOf = (url) => {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+};
 
 // Same rule as main's isLocalUrl: these servers need no API key.
 const LOCAL_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i;
@@ -788,7 +959,7 @@ async function testConnectionNow() {
   if (!model) return setTestStatus("error", "Choose a model first.");
   const params = {
     provider: state.provider,
-    baseUrl: openai ? $("keyBaseUrl").value.trim() || state.openaiBaseUrl || "" : "",
+    baseUrl: openai ? keyBaseUrlValue() : "",
     model,
     key: $("keyInput").value.trim(),
   };
@@ -812,8 +983,11 @@ function renderKeyForm(changing) {
   $("openaiFields").hidden = !openai;
   if (keyFormFor !== state.provider) {
     keyFormFor = state.provider;
+    keyModels = []; // the other provider's list doesn't apply
+    keyCombo?.close();
     $("keyBaseUrl").value = state.openaiBaseUrl || "";
     $("keyModel").value = openai ? state.openaiModel || "" : state.model || "";
+    keyModelTyped = false; // filled in from settings, so it may follow the server's list
     resetTestStatus();
     loadKeyModels();
   }
@@ -839,7 +1013,8 @@ $("keyForm").addEventListener("submit", (e) => {
   const key = $("keyInput").value.trim();
   const model = $("keyModel").value.trim();
   if (state.provider === "openai") {
-    const url = $("keyBaseUrl").value.trim();
+    const url = keyBaseUrlValue();
+    $("keyBaseUrl").value = url;
     if (!model) return showNotice({ level: "error", text: "Enter the model name, for example gpt-4o, gemini-2.5-pro or llama3.1." });
     if (url !== state.openaiBaseUrl) g.setSetting("openaiBaseUrl", url);
     if (model !== state.openaiModel) g.setSetting("openaiModel", model);
@@ -851,14 +1026,32 @@ $("keyForm").addEventListener("submit", (e) => {
   closePanel();
 });
 $("keyBaseUrl").addEventListener("input", () => {
+  // The model and list belong to the old server.
+  keyModelTyped = false;
+  keyModels = [];
+  keyCombo?.refresh();
+  keyCombo?.close();
   resetTestStatus();
+  clearTimeout(renameTimer);
+  renameTimer = setTimeout(renameModelNow, 400);
   loadKeyModels({ delay: 600 });
+});
+let renameTimer;
+$("keyBaseUrl").addEventListener("blur", () => {
+  clearTimeout(renameTimer);
+  renameModelNow();
+  const typed = $("keyBaseUrl").value.trim();
+  const url = typed && normalizeBaseUrl(typed);
+  if (url && url !== typed) $("keyBaseUrl").value = url;
 });
 $("keyInput").addEventListener("input", () => {
   resetTestStatus();
   loadKeyModels({ delay: 600 });
 });
-$("keyModel").addEventListener("input", resetTestStatus);
+$("keyModel").addEventListener("input", () => {
+  keyModelTyped = true;
+  resetTestStatus();
+});
 $("keyModelStatus").addEventListener("click", (e) => {
   if (e.target.closest("#keyModelRetry")) loadKeyModels();
 });
@@ -955,9 +1148,15 @@ $("saidForm").addEventListener("submit", (e) => {
   }
   renderStage();
 });
-$("settingsModel").addEventListener("change", () => {
-  const v = $("settingsModel").value;
-  if (v) g.setSetting(state.provider === "openai" ? "openaiModel" : "model", v);
+settingsCombo = makeCombo({
+  input: $("settingsModel"),
+  toggle: $("settingsModelToggle"),
+  list: $("settingsModelList"),
+  models: () => settingsModels,
+  current: () => (state.provider === "openai" ? state.openaiModel : state.model) || "",
+  pick: (id) => g.setSetting(state.provider === "openai" ? "openaiModel" : "model", id),
+  revertOnBlur: true,
+  emptyText: "No models listed yet. Press Refresh, or type a model ID.",
 });
 $("refreshModelsBtn").addEventListener("click", async () => {
   const btn = $("refreshModelsBtn");

@@ -661,6 +661,95 @@ test("without an API key: the key form shows, the gear still opens Settings, Lis
   assert.equal(await run(`return getComputedStyle(document.getElementById("listenBtn")).display;`), "flex");
 });
 
+test("provider form: the saved model follows the server's list; a typed one is left alone", { skip }, async () => {
+  await run(`await g.setSetting("provider", "openai");`);
+  await until(`state.provider === "openai"`);
+  const open = async (models, saved) => {
+    await run(`listModels = async () => ({ models: ${JSON.stringify(models.map((id) => ({ id })))} });
+      setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();
+      state.openaiModel = ${JSON.stringify(saved)}; document.getElementById("keyBtn").click();`);
+    await until(`keyModels.length === ${models.length}`);
+    return run(`return [document.getElementById("keyModel").value, document.getElementById("keyModelStatus").textContent];`);
+  };
+  // "gpt-5" saved for OpenAI; OpenRouter calls it "openai/gpt-5".
+  const [renamed, renamedNote] = await open(["openai/gpt-5", "openai/gpt-5.4", "anthropic/claude-haiku-5.5"], "gpt-5");
+  assert.equal(renamed, "openai/gpt-5");
+  assert.match(renamedNote, /Changed to openai\/gpt-5/);
+  await click("#cancelKeyBtn");
+  // And back: "openai/gpt-5" saved, now on OpenAI's own list as "gpt-5".
+  const [back] = await open(["gpt-5", "gpt-5-mini", "gpt-4o"], "openai/gpt-5");
+  assert.equal(back, "gpt-5");
+  await click("#cancelKeyBtn");
+  // Already on the list: left exactly as it is.
+  const [kept] = await open(["gpt-5", "gpt-4o"], "gpt-5");
+  assert.equal(kept, "gpt-5");
+  await click("#cancelKeyBtn");
+  // Not on the list at all: cleared, with a note to choose one.
+  const [cleared, clearedNote] = await open(["anthropic/claude-haiku-5.5"], "gpt-5");
+  assert.equal(cleared, "");
+  assert.match(clearedNote, /gpt-5 isn't listed by .*Choose one from the list/);
+  // A model the user typed is never changed by a later list load.
+  await run(`const m = document.getElementById("keyModel"); m.value = "my-custom"; m.dispatchEvent(new Event("input")); await loadKeyModels();`);
+  assert.equal(await run(`return document.getElementById("keyModel").value;`), "my-custom");
+  await click("#cancelKeyBtn");
+  // Settings warns when the saved model isn't on the provider's list.
+  await run(`state.openaiModel = "gpt-5"; state.modelOptions = [{ id: "openai/gpt-5" }]; render();`);
+  assert.match(await run(`return document.getElementById("modelHint").textContent;`), /gpt-5 isn't listed by .*Choose a model\./);
+  assert.ok(await run(`return document.getElementById("modelHint").classList.contains("caution");`));
+  await run(`setMenu(false); listModels = (p) => g.listModels(p);`);
+});
+
+test("provider form: a bare server address is normalized, and the old server's model and list are dropped", { skip }, async () => {
+  await run(`await g.setSetting("provider", "openai");`);
+  await until(`state.provider === "openai"`);
+  await run(`window.__calls = []; listModels = async (p) => { window.__calls.push(p); return { models: [{ id: "gpt-5.4" }, { id: "gpt-4o" }] }; };
+    setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();
+    state.openaiBaseUrl = "https://openrouter.ai/api/v1"; state.openaiModel = "";
+    document.getElementById("keyBtn").click();`);
+  await until(`keyModels.length === 2`);
+  // The user picked OpenRouter's name for the model.
+  await run(`keyModels = [{ id: "openai/gpt-5.4" }]; const m = document.getElementById("keyModel"); m.value = "openai/gpt-5.4"; m.dispatchEvent(new Event("input"));
+    window.__calls = []; const u = document.getElementById("keyBaseUrl"); u.value = "api.openai.com"; u.dispatchEvent(new Event("input"));`);
+  assert.equal(await run(`return keyModels.length;`), 0, "the old server's list is dropped at once");
+  assert.equal(await run(`return document.getElementById("keyModelList").hidden;`), true);
+  await until(`window.__calls.length === 1 && keyModels.length === 2`);
+  assert.equal(await run(`return window.__calls[0].baseUrl;`), "https://api.openai.com/v1");
+  assert.equal(await run(`return document.getElementById("keyModelStatus").classList.contains("error");`), false);
+  assert.equal(await run(`return document.getElementById("keyModel").value;`), "gpt-5.4");
+  await run(`const u = document.getElementById("keyBaseUrl"); u.dispatchEvent(new Event("blur"));`);
+  assert.equal(await run(`return document.getElementById("keyBaseUrl").value;`), "https://api.openai.com/v1");
+  // A model chosen after the change is left alone by a later load.
+  await run(`const m = document.getElementById("keyModel"); m.value = "my-custom"; m.dispatchEvent(new Event("input")); await loadKeyModels();`);
+  assert.equal(await run(`return document.getElementById("keyModel").value;`), "my-custom");
+  await click("#cancelKeyBtn");
+  await run(`setMenu(false); listModels = (p) => g.listModels(p);`);
+});
+
+test("provider form: changing the address renames the model even when the list can't load", { skip }, async () => {
+  await run(`await g.setSetting("provider", "openai");`);
+  await until(`state.provider === "openai"`);
+  await run(`listModels = async () => ({ error: "api.openai.com rejected the API key." });
+    setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();
+    state.openaiBaseUrl = "https://openrouter.ai/api/v1"; state.openaiModel = "openai/gpt-5.4"; state.keyHint = "1234";
+    document.getElementById("keyBtn").click();`);
+  await until(`document.getElementById("keyModel").value === "openai/gpt-5.4"`);
+  const setUrl = (u) => run(`const e = document.getElementById("keyBaseUrl"); e.value = ${JSON.stringify(u)}; e.dispatchEvent(new Event("input"));`);
+  const model = () => run(`return document.getElementById("keyModel").value;`);
+  await setUrl("api.openai.com");
+  await until(`document.getElementById("keyModel").value === "gpt-5.4"`);
+  assert.equal(await run(`return document.getElementById("keyModelStatus").textContent.includes("Changed to gpt-5.4") || document.getElementById("keyModelStatus").textContent.includes("rejected");`), true);
+  await run(`document.getElementById("keyModel").value = "gpt-5"; keyModelTyped = false;`);
+  await setUrl("openrouter.ai");
+  await until(`document.getElementById("keyModel").value === "openai/gpt-5"`);
+  // A model typed after the change is left alone.
+  await setUrl("api.openai.com");
+  await run(`const m = document.getElementById("keyModel"); m.value = "openai/mine"; m.dispatchEvent(new Event("input"));`);
+  await new Promise((r) => setTimeout(r, 900));
+  assert.equal(await model(), "openai/mine");
+  await click("#cancelKeyBtn");
+  await run(`setMenu(false); listModels = (p) => g.listModels(p);`);
+});
+
 test("provider form: no key yet is a hint, not an error, except for a local server", { skip }, async () => {
   await run(`await g.setSetting("provider", "openai");`);
   await until(`state.provider === "openai"`);
@@ -695,9 +784,27 @@ test("provider form: cards switch provider, models load, Test connection resets 
     setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();`);
   await click("#keyBtn");
   assert.ok(await shown("keyForm"));
-  await until(`document.querySelectorAll("#keyModelList option").length === 2`);
-  assert.deepEqual(await run(`return [...document.querySelectorAll("#keyModelList option")].map((o) => o.value);`), ["fake", "alpha"]);
+  await until(`keyModels.length === 2`);
   assert.equal(await run(`return document.getElementById("keyModel").value;`), "fake", "the saved model is preselected");
+  // The chevron shows every model, even with one already in the box.
+  await click("#keyModelToggle");
+  assert.ok(await shown("keyModelList"));
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#keyModelList li[data-i] .combo-id")].map((o) => o.textContent);`), ["fake", "alpha"]);
+  assert.equal(await run(`return document.querySelector('#keyModelList li[aria-selected="true"] .combo-id').textContent;`), "fake");
+  // Typing filters by ID or name; clicking an entry picks it and closes the list.
+  await run(`const m = document.getElementById("keyModel"); m.value = "alp"; m.dispatchEvent(new Event("input"));`);
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#keyModelList li[data-i] .combo-id")].map((o) => o.textContent);`), ["alpha"]);
+  await click("#keyModelList li[data-i]");
+  assert.equal(await run(`return document.getElementById("keyModel").value;`), "alpha");
+  assert.ok(!(await shown("keyModelList")));
+  // Keyboard: ArrowDown opens and moves, Enter picks, Escape closes.
+  await run(`const m = document.getElementById("keyModel"); m.focus(); m.value = ""; m.dispatchEvent(new Event("input"));
+    m.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    m.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));`);
+  assert.equal(await run(`return document.getElementById("keyModel").value;`), "fake");
+  await run(`const m = document.getElementById("keyModel"); m.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowDown", bubbles: true }));
+    m.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true, cancelable: true }));`);
+  assert.ok(!(await shown("keyModelList")));
 
   await click('#keyProvider [data-value="anthropic"]');
   await until(`state.provider === "anthropic"`);
@@ -726,7 +833,7 @@ test("settings: the model hint shows known prices, and Depth hides for models wi
   await run(`state.provider = "anthropic"; state.modelOptions = []; state.model = "claude-haiku-5-5"; state.effortSupported = true;
     setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click(); render();`);
   // No list fetched yet: the models Glance knows are offered.
-  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModel option")].map((o) => o.value);`), ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
+  assert.deepEqual(await run(`return settingsModels.map((m) => m.id);`), ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
   assert.match(await run(`return document.getElementById("modelHint").textContent;`), /Haiku 5\.5: \$0\.1 \/ \$0\.5 per million tokens/);
   assert.equal(await run(`return document.getElementById("effortRow").hidden;`), false);
   await run(`state.model = "claude-haiku-4-5"; state.effortSupported = false; render();`);
@@ -740,15 +847,30 @@ test("settings: the model dropdown lists state.modelOptions and saves the choice
     state.modelOptions = [{ id: "alpha", name: "Alpha" }, { id: "beta", name: "Beta" }];
     state.openaiModel = "alpha"; setMenu(true);
     document.querySelector('#settingsTabs [data-tab="answers"]').click(); render();`);
-  await until(`document.querySelectorAll("#settingsModel option").length === 2`);
-  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModel option")].map((o) => [o.value, o.textContent]);`), [["alpha", "Alpha"], ["beta", "Beta"]]);
   assert.equal(await run(`return document.getElementById("settingsModel").value;`), "alpha");
-  await run(`const s = document.getElementById("settingsModel"); s.value = "beta"; s.dispatchEvent(new Event("change"));`);
+  // The chevron lists every model, with the saved one marked.
+  await click("#settingsModelToggle");
+  assert.ok(await shown("settingsModelList"));
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModelList li[data-i]")].map((li) => [li.querySelector(".combo-id").textContent, li.querySelector(".combo-name")?.textContent]);`), [["alpha", "Alpha"], ["beta", "Beta"]]);
+  assert.equal(await run(`return document.querySelector('#settingsModelList li[aria-selected="true"] .combo-id').textContent;`), "alpha");
+  // Picking one saves it.
+  await click('#settingsModelList li[data-i="1"]');
   await until(`state.openaiModel === "beta"`);
+  assert.ok(!(await shown("settingsModelList")));
+  // Typing filters; leaving without picking puts the saved model back. (The
+  // save above brought the app's real state back, so the fake list is set again.)
+  await run(`state.modelOptions = [{ id: "alpha", name: "Alpha" }, { id: "beta", name: "Beta" }]; render();
+    const m = document.getElementById("settingsModel"); m.focus(); m.value = "alp"; m.dispatchEvent(new Event("input"));`);
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModelList li[data-i] .combo-id")].map((e) => e.textContent);`), ["alpha"]);
+  await run(`document.getElementById("settingsModel").dispatchEvent(new Event("blur"));`);
+  assert.equal(await run(`return document.getElementById("settingsModel").value;`), "beta");
+  // A model ID that isn't listed can be typed and saved with Enter.
+  await run(`const m = document.getElementById("settingsModel"); m.focus(); m.value = "custom-model"; m.dispatchEvent(new Event("input"));
+    m.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true, cancelable: true }));`);
+  await until(`state.openaiModel === "custom-model"`);
   // The saved model still shows when the provider's list doesn't include it.
-  await run(`state.openaiModel = "gamma"; state.modelOptions = [{ id: "alpha", name: "Alpha" }]; render();`);
+  await run(`const sm = document.getElementById("settingsModel"); sm.blur(); sm.dispatchEvent(new Event("blur")); state.openaiModel = "gamma"; state.modelOptions = [{ id: "alpha", name: "Alpha" }]; render();`);
   assert.equal(await run(`return document.getElementById("settingsModel").value;`), "gamma");
-  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsModel option")].map((o) => o.value);`), ["gamma", "alpha"]);
   // Refresh asks the provider for a fresh list.
   await run(`window.__listCalls = 0; listModels = async () => { window.__listCalls++; return { models: [{ id: "delta", name: "Delta" }] }; };`);
   await click("#refreshModelsBtn");

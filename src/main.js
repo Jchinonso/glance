@@ -5,6 +5,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
+import { normalizeBaseUrl } from "./urls.js";
 import { caveman, keepsFacts } from "./compress.js";
 import { DEFAULT_BASE_URL, downloadModel, findModel, MODELS } from "./models.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
@@ -229,8 +230,7 @@ function canAsk() {
   return !!apiKey();
 }
 
-const validBaseUrl = (url) => /^https?:\/\/\S+$/i.test(url);
-const normalizeBaseUrl = (url) => String(url ?? "").trim().replace(/\/+$/, "");
+const validBaseUrl = (url) => !!normalizeBaseUrl(url);
 const keyForProvider = (prov) => (prov === "openai" ? config.openaiKey : config.apiKey) || process.env[KEY_ENV[prov]] || null;
 const modelListKey = (prov, baseUrl) => `${prov}|${prov === "openai" ? normalizeBaseUrl(baseUrl) : ""}`;
 const cachedModels = (prov, baseUrl) => config.modelLists?.[modelListKey(prov, baseUrl)]?.models || [];
@@ -262,7 +262,7 @@ async function refreshModelList(prov = config.provider, baseUrl = config.openaiB
     log(`models listed provider=${prov} count=${models.length}`);
     broadcastState();
   } catch (e) {
-    log(`models list failed provider=${prov}:`, e);
+    log(`models list failed provider=${prov}: ${e?.message || e}`); // an expected server reply, not a crash: one line
   }
 }
 
@@ -1095,7 +1095,7 @@ ipcMain.handle("list-models", async (_e, options = {}) => {
     broadcastState();
     return { models };
   } catch (e) {
-    log(`models list failed provider=${prov}:`, e);
+    log(`models list failed provider=${prov}: ${e?.message || e}`); // an expected server reply, not a crash: one line
     return { error: e.message || String(e) };
   }
 });

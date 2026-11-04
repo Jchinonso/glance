@@ -160,12 +160,16 @@
                 <div class="row-text"><span>AI provider</span><small>Anthropic, OpenAI or any compatible service, and its API key</small></div>
                 <span class="row-meta"><span id="keyMeta"></span><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M7.5 4.5 13 10l-5.5 5.5" /></svg></span>
               </button>
-              <div class="row" id="modelRow">
+              <div class="row model-row" id="modelRow">
                 <div class="row-text"><span>Model</span><small id="modelHint"></small></div>
                 <div class="model-picker">
-                  <select id="settingsModel" aria-label="Model"></select>
+                  <div class="combo combo-compact">
+                    <input id="settingsModel" role="combobox" aria-expanded="false" aria-controls="settingsModelList" aria-autocomplete="list" aria-label="Model" autocomplete="off" spellcheck="false" />
+                    <button type="button" class="combo-toggle" id="settingsModelToggle" tabindex="-1" aria-label="Show all models"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8 10 12.5 14.5 8" /></svg></button>
+                  </div>
                   <button type="button" class="textlink" id="refreshModelsBtn">Refresh</button>
                 </div>
+                <ul class="combo-list model-row-list" id="settingsModelList" role="listbox" hidden></ul>
               </div>
               <div class="row" id="effortRow">
                 <div class="row-text"><span>Depth</span><small>How long it thinks first. Deeper is slower and costs more.</small></div>
@@ -414,10 +418,16 @@
               <label>Server address<input id="keyBaseUrl" type="url" class="mono" placeholder="https://openrouter.ai/api/v1" autocomplete="off" spellcheck="false" /></label>
             </div>
             <div class="keyfields-row">
-              <label>Model<input id="keyModel" list="keyModelList" placeholder="Choose or type a model" autocomplete="off" spellcheck="false" /></label>
+              <div class="combo-field">
+                <label for="keyModel">Model</label>
+                <div class="combo" id="keyModelCombo">
+                  <input id="keyModel" role="combobox" aria-expanded="false" aria-controls="keyModelList" aria-autocomplete="list" placeholder="Choose or type a model" autocomplete="off" spellcheck="false" />
+                  <button type="button" class="combo-toggle" id="keyModelToggle" tabindex="-1" aria-label="Show all models"><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M5.5 8 10 12.5 14.5 8" /></svg></button>
+                  <ul class="combo-list" id="keyModelList" role="listbox" hidden></ul>
+                </div>
+              </div>
               <label>API key<input id="keyInput" type="password" placeholder="Paste your API key" autocomplete="off" spellcheck="false" /></label>
             </div>
-            <datalist id="keyModelList"></datalist>
             <p class="model-status" id="keyModelStatus" hidden></p>
             <div class="test-row">
               <button type="button" class="test-btn" id="testConnBtn">Test connection</button>
@@ -490,6 +500,7 @@
       </footer>
     </div>
     <script src="questions.js"></script>
+    <script src="urls.js"></script>
     <script src="hints.js"></script>
     <script src="onboarding.js"></script>
     <script src="highlight.js"></script>
