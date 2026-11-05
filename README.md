@@ -134,13 +134,13 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 
 **Transcription.** Under **Settings › General › Transcription**, **Accurate** (the default) uses small.en (488 MB): much better with technical terms, accents, noise and quiet speakers, and still faster than real time on Apple Silicon. **Fast** uses base.en (148 MB), about twice as quick per piece but makes more mistakes. It is downloaded only the first time Fast is picked; Accurate is used until it's ready. Accurate is recommended for interviews: a misheard question can't be answered well.
 
-**Depth.** **Settings › Answers › Depth** has three settings. **Quick** starts answers soonest and is recommended for live calls. **Balanced** and **Thorough** let the model think first, adding seconds before the first word.
+**Depth.** **Settings › Answers › Depth** has three settings. **Quick** starts answers soonest and is recommended for live calls. **Balanced** and **Thorough** let the model think first, adding seconds before the first word. Spoken questions always answer at Quick whatever Depth is set to; Depth applies to typed questions and questions with a screenshot. On OpenAI-compatible servers Depth is sent as the reasoning level (`reasoning_effort`, or `reasoning.effort` on OpenRouter; Quick tries `minimal`, then `low`), and models that don't reason ignore it.
 
 ## AI providers
 
 Choose a provider in **Settings › Answers › AI provider**, or in setup. The two cards open the same form: **OpenAI-compatible** for any server that speaks the OpenAI API (hosted or on your network), or **Anthropic** for Claude through your own key. OpenAI-compatible has a **Server address**, a **Model** box and an **API key**; Anthropic has just the model and key.
 
-Models are listed from the provider itself: Anthropic's Models API, or the server's `/models` endpoint for OpenAI-compatible services. The **Model** box filters as you type (OpenRouter lists hundreds), and you can type any model ID the list doesn't show. Models that can't answer a chat (embeddings, speech, image and moderation models) and OpenRouter's delayed `:batch` versions are left out. In **Settings › Answers › Model**, the same list is a dropdown with a **Refresh** link, and the line under it shows the price per million tokens for Opus 5.5, Sonnet 5.5 and Haiku 5.5. **Depth** only appears for models that support it, so it's hidden for OpenAI-compatible servers and older Claude models such as Haiku 4.5.
+Models are listed from the provider itself: Anthropic's Models API, or the server's `/models` endpoint for OpenAI-compatible services. The **Model** box filters as you type (OpenRouter lists hundreds), and you can type any model ID the list doesn't show. Models that can't answer a chat (embeddings, speech, image and moderation models) and OpenRouter's delayed `:batch` versions are left out. In **Settings › Answers › Model**, the same list is a dropdown with a **Refresh** link, and the line under it shows the price per million tokens for Opus 5.5, Sonnet 5.5 and Haiku 5.5. **Depth** only appears for models that support it, so it's hidden for older Claude models such as Haiku 4.5.
 
 **Test connection** sends one tiny request with the values currently in the form, even before you save them, and reports how long the model took to reply. Use it to check a new key, model or server address before relying on it.
 
@@ -150,7 +150,7 @@ Models are listed from the provider itself: Anthropic's Models API, or the serve
 | OpenAI, Gemini, OpenRouter, Groq, Mistral… | Server address, model and API key | Tokens only |
 | Ollama or LM Studio (local) | Server address such as `http://localhost:11434/v1` and model; no key | Tokens only |
 
-On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. Depth's thinking control and the prompt cache apply only to Anthropic. Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
+On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. The prompt cache applies only to Anthropic, and Depth's thinking control is Anthropic-specific (OpenAI-compatible servers get it as a reasoning level). Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
 
 ## Troubleshooting
 

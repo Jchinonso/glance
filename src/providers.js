@@ -246,6 +246,29 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
       return withLimit();
     }
   };
+  // Depth -> reasoning level. OpenRouter takes reasoning: { effort }, other
+  // servers reasoning_effort. Quick tries "none", then "minimal" (fastest on GPT-5 models),
+  // then "low"; a 400 about it steps down the ladder, ending with no parameter
+  // (models that don't reason). What worked is remembered per provider.
+  // Quick: "none" (GPT-5.1 and later), then "minimal" (GPT-5), then "low".
+  const LADDERS = { low: ["none", "minimal", "low"], medium: ["medium"], high: ["high"] };
+  const openRouter = /(^|[/.])openrouter\.ai([/:]|$)/i.test(root);
+  const reasoningStep = {};
+  const REASONING_ERROR = /reasoning|effort|minimal|unsupported (?:parameter|value)|unrecognized (?:request )?argument/i;
+  const sendReasoned = async (body, effort, maxTokens, signal) => {
+    const ladder = LADDERS[effort];
+    if (!ladder) return sendLimited(body, maxTokens, signal);
+    for (;;) {
+      const level = ladder[reasoningStep[effort] || 0];
+      const withLevel = level ? { ...body, ...(openRouter ? { reasoning: { effort: level } } : { reasoning_effort: level }) } : body;
+      try {
+        return await sendLimited(withLevel, maxTokens, signal);
+      } catch (e) {
+        if (!level || !(e instanceof HttpError) || e.status !== 400 || !REASONING_ERROR.test(e.message)) throw e;
+        reasoningStep[effort] = (reasoningStep[effort] || 0) + 1;
+      }
+    }
+  };
   const describe = (e, model) => {
     const host = (() => {
       try {
@@ -313,11 +336,11 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
         abort.done();
       }
     },
-    stream({ model, system, parts, maxTokens, onText }) {
+    stream({ model, system, parts, maxTokens, effort, onText }) {
       const controller = new AbortController();
       const content = parts.map((p) => (p.type === "image" ? { type: "image_url", image_url: { url: `data:image/jpeg;base64,${p.data}` } } : p));
       const done = (async () => {
-        const res = await sendLimited({ model: model || defaultModel, stream: true, stream_options: { include_usage: true }, messages: messages(system, content) }, maxTokens, controller.signal);
+        const res = await sendReasoned({ model: model || defaultModel, stream: true, stream_options: { include_usage: true }, messages: messages(system, content) }, effort, maxTokens, controller.signal);
         let out = "";
         let stop = "end";
         let used = usage();

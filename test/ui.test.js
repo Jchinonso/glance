@@ -836,7 +836,10 @@ test("settings: the model hint shows known prices, and Depth hides for models wi
   assert.deepEqual(await run(`return settingsModels.map((m) => m.id);`), ["claude-opus-5-5", "claude-sonnet-5-5", "claude-haiku-5-5"]);
   assert.match(await run(`return document.getElementById("modelHint").textContent;`), /Haiku 5\.5: \$0\.1 \/ \$0\.5 per million tokens/);
   assert.equal(await run(`return document.getElementById("effortRow").hidden;`), false);
-  await run(`state.model = "claude-haiku-4-5"; state.effortSupported = false; render();`);
+  await run(`state.provider = "openai"; state.effortSupported = true; render();`);
+  assert.equal(await run(`return document.getElementById("effortRow").hidden;`), false);
+  assert.match(await run(`return document.querySelector("#effortRow small").textContent;`), /Spoken questions always use Quick/);
+  await run(`state.provider = "anthropic"; state.model = "claude-haiku-4-5"; state.effortSupported = false; render();`);
   assert.match(await run(`return document.getElementById("modelHint").textContent;`), /no prices/);
   assert.equal(await run(`return document.getElementById("effortRow").hidden;`), true);
   await run(`setMenu(false); render();`);

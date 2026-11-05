@@ -377,8 +377,8 @@ function state() {
     providers: Object.entries(PROVIDERS).map(([id, p]) => ({ id, label: p.label })),
     model: config.model,
     models: Object.entries(ANTHROPIC_MODELS).map(([id, m]) => ({ id, name: m.name, input: m.price.input, output: m.price.output })),
-    // Depth only does something on Anthropic models that accept effort.
-    effortSupported: config.provider !== "openai" && supportsEffort(config.model),
+    // Depth applies to OpenAI-compatible servers (sent as the reasoning level) and Anthropic models that accept effort.
+    effortSupported: config.provider === "openai" || supportsEffort(config.model),
     modelOptions: cachedModels(config.provider, config.openaiBaseUrl),
     openaiBaseUrl: config.openaiBaseUrl,
     openaiModel: config.openaiModel,
@@ -673,7 +673,9 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
   let text = "";
   const model = currentModel();
   const think = !heard || screenshots.length > 0;
-  log(`ask id=${id} heard=${heard} think=${think} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${config.effort} screenshots=${screenshots.length}`);
+  // Spoken questions always answer at Quick; Depth applies to typed and screen questions.
+  const effort = think ? config.effort : "low";
+  log(`ask id=${id} heard=${heard} think=${think} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${effort} depth=${config.effort} screenshots=${screenshots.length}`);
   let firstToken = false;
   const job = ask({
     provider: llm,
@@ -682,7 +684,7 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
     transcript: transcript.slice(-TRANSCRIPT_LIMIT),
     previous: answers.slice(config.style === "interview" ? -INTERVIEW_PREVIOUS_LIMIT : -PREVIOUS_LIMIT),
     screenshots,
-    effort: config.effort,
+    effort,
     think,
     style: config.style,
     customInstructions: sentInstructions(),
@@ -776,7 +778,7 @@ async function prewarmAnswers() {
         jobDescription: config.jobDescription,
         profile: profile(),
       }),
-      effort: config.effort,
+      effort: "low", // what heard questions use, so the cache matches
     });
     log(`prewarm ms=${Date.now() - startedAt} cacheWrite=${u?.cacheWrite || 0} cacheRead=${u?.cacheRead || 0}`);
   } catch (e) {

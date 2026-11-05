@@ -222,3 +222,70 @@ test("Anthropic: prewarm sends a non-streaming max_tokens 0 cache request", asyn
     srv.close();
   }
 });
+
+// A chat server that answers per a handler and records request bodies.
+async function mockChat(handler) {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      const body = JSON.parse(b);
+      bodies.push(body);
+      const err = handler(body);
+      if (err) {
+        res.writeHead(400, { "content-type": "application/json" });
+        return res.end(JSON.stringify({ error: { message: err } }));
+      }
+      res.writeHead(200, { "content-type": "text/event-stream" });
+      res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  return { port: server.address().port, bodies, close: () => server.close() };
+}
+const streamOnce = (p, effort) => p.stream({ model: "m", system: "s", parts: [{ type: "text", text: "hi" }], maxTokens: 50, effort, onText() {} }).done;
+
+test("OpenAI-compatible Depth: OpenRouter gets reasoning.effort, others reasoning_effort", async () => {
+  const s = await mockChat(() => null);
+  try {
+    const or = createProvider({ provider: "openai", apiKey: "k", baseUrl: `http://127.0.0.1:${s.port}/openrouter.ai/api/v1`, model: "m" });
+    await streamOnce(or, "low");
+    await streamOnce(or, "medium");
+    await streamOnce(or, "high");
+    assert.deepEqual(s.bodies.map((b) => b.reasoning), [{ effort: "none" }, { effort: "medium" }, { effort: "high" }]);
+    assert.ok(s.bodies.every((b) => !("reasoning_effort" in b)));
+    const other = createProvider({ provider: "openai", apiKey: "k", baseUrl: `http://127.0.0.1:${s.port}/v1`, model: "m" });
+    await streamOnce(other, "low");
+    assert.equal(s.bodies.at(-1).reasoning_effort, "none");
+    assert.ok(!("reasoning" in s.bodies.at(-1)));
+  } finally {
+    s.close();
+  }
+});
+
+test("OpenAI-compatible Depth: falls back none -> minimal -> low -> no parameter and remembers", async () => {
+  // Like original GPT-5: no "none"; like GPT-4-era reasoning models: no "minimal".
+  const s = await mockChat((b) => (b.reasoning_effort === "none" || b.reasoning_effort === "minimal" ? `Unsupported value: '${b.reasoning_effort}' is not supported` : null));
+  try {
+    const p = createProvider({ provider: "openai", apiKey: "k", baseUrl: `http://127.0.0.1:${s.port}/v1`, model: "m" });
+    await streamOnce(p, "low");
+    assert.deepEqual(s.bodies.map((b) => b.reasoning_effort), ["none", "minimal", "low"]);
+    await streamOnce(p, "low");
+    assert.equal(s.bodies.at(-1).reasoning_effort, "low");
+    assert.equal(s.bodies.length, 4);
+  } finally {
+    s.close();
+  }
+  const t = await mockChat((b) => ("reasoning_effort" in b ? "Unrecognized request argument supplied: reasoning_effort" : null));
+  try {
+    const p = createProvider({ provider: "openai", apiKey: "k", baseUrl: `http://127.0.0.1:${t.port}/v1`, model: "m" });
+    await streamOnce(p, "low");
+    assert.deepEqual(t.bodies.map((b) => b.reasoning_effort), ["none", "minimal", "low", undefined]);
+    await streamOnce(p, "low");
+    assert.equal(t.bodies.length, 5);
+    assert.ok(!("reasoning_effort" in t.bodies[4]));
+  } finally {
+    t.close();
+  }
+});

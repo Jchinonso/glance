@@ -178,7 +178,7 @@ function renderMenu() {
   $("interviewOffNote").hidden = interview;
   $("cloakWarn").hidden = !!state.invisible;
   const openai = state.provider === "openai";
-  $("effortRow").hidden = openai || state.effortSupported === false; // Anthropic models that accept effort only
+  $("effortRow").hidden = state.effortSupported === false; // Claude models without effort
   renderSettingsModel();
   for (const b of $("effort").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.effort));
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
