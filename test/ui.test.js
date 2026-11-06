@@ -80,6 +80,13 @@ before(async () => {
         return res.end(JSON.stringify({ choices: [{ message: { content: "Hi" }, finish_reason: "stop" }] }));
       }
       res.writeHead(200, { "content-type": "text/event-stream" });
+      // Auto-answer's turn-end check on an introduction: nothing to answer.
+      const asked = request.messages?.[1]?.content?.at(-1)?.text ?? "";
+      if (asked.includes("reply exactly <none>") && /Interviewer's latest turn: [^\n]*\bwelcome\b/i.test(asked)) {
+        for (const piece of ["<no", "ne>"]) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+        return res.end();
+      }
       // "slowly" in the question being asked (not earlier answers): one piece,
       // then hang until stopped.
       if (/Question: [^\n]*slowly/.test(request.messages?.[1]?.content?.at(-1)?.text ?? "")) {
@@ -580,6 +587,75 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   await sleep(400);
   assert.deepEqual(await run(`return [answers.length, answers.at(-1).question, waitingForQuestion];`), [count + 1, "What is a race condition?", false]);
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
+});
+
+// Turn-end checks: requests that carry the gated instruction, and the log.
+const isGated = (r) => !!r.messages?.[1]?.content?.at?.(-1)?.text?.includes("reply exactly <none>");
+const appLog = () => readFileSync(path.join(dir, "logs", "glance.log"), "utf8");
+async function waitFor(fn, ms = 5000) {
+  const end = Date.now() + ms;
+  while (Date.now() < end) {
+    if (fn()) return;
+    await sleep(50);
+  }
+  throw new Error(`timed out waiting for ${fn}`);
+}
+const freshTurn = `stillHearing = async () => false; pendingQuestion = null; lastAutoQuestion = null; turn = null; state.listening = true; view = "answers"; document.getElementById("question").value = ""; questionTypedAt = 0;`;
+
+test("auto-answer: an introduction is checked once at the end of the turn, and nothing shows", { skip }, async () => {
+  const now = Date.now() - 400000; // in the past, so these lines never lead in to later tests' questions
+  const count = await run(`return answers.length;`);
+  const shownPage = await run(`return page;`);
+  const sent = requests.length;
+  const nones = (appLog().match(/turn check id=\d+ result=none/g) || []).length;
+  await run(`${freshTurn} onTranscript({ role: "them", text: "Hi, I'm Abby, welcome back to the channel. This will be nine questions.", start: ${now}, at: ${now + 2500} });`);
+  await waitFor(() => (appLog().match(/turn check id=\d+ result=none words=\d+ ms=\d+/g) || []).length === nones + 1);
+  await sleep(500);
+  assert.equal(requests.slice(sent).filter(isGated).length, 1, "one gated request");
+  assert.deepEqual(await run(`return [answers.length, page, state.busy, turnCheckPending, document.getElementById("thinkHarder").hidden];`), [count, shownPage, false, false, true]);
+});
+
+test("auto-answer: a prompt the rules miss is answered after the turn check", { skip }, async () => {
+  const now = Date.now() - 390000;
+  const count = await run(`return answers.length;`);
+  const sent = requests.length;
+  const text = "I'm keen to hear about the project you're proudest of.";
+  assert.equal(await run(`return isQuestion(${JSON.stringify(text)});`), false, "the rules don't catch this one");
+  await run(`${freshTurn} onTranscript({ role: "them", text: ${JSON.stringify(text)}, start: ${now}, at: ${now + 2500} });`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  assert.deepEqual(await run(`const a = answers.at(-1); return [a.question, a.auto, a.gated, a.text.startsWith("**I led")];`), [text, true, true, true]);
+  assert.equal(requests.slice(sent).filter(isGated).length, 1);
+  assert.match(appLog(), /turn check id=\d+ result=answer ms=\d+/);
+});
+
+test("auto-answer: a question the rules catch fires the usual way, with no turn check", { skip }, async () => {
+  const now = Date.now() - 380000;
+  const count = await run(`return answers.length;`);
+  const sent = requests.length;
+  await run(`${freshTurn} onTranscript({ role: "them", text: "What's the hardest bug you've fixed?", start: ${now}, at: ${now + 1500} });`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  await sleep(400);
+  assert.deepEqual(await run(`const a = answers.at(-1); return [a.question, a.auto, a.gated];`), ["What's the hardest bug you've fixed?", true, false]);
+  const asked = requests.slice(sent).filter((r) => r.messages);
+  assert.equal(asked.length, 1);
+  assert.ok(!isGated(asked[0]), "no gated instruction");
+  assert.match(askedText(asked[0]), /Question: What's the hardest bug you've fixed\?/);
+});
+
+test("auto-answer: one turn check per turn, however long the quiet lasts", { skip }, async () => {
+  const now = Date.now() - 370000;
+  const count = await run(`return answers.length;`);
+  const sent = requests.length;
+  await run(`${freshTurn} onTranscript({ role: "them", text: "Welcome everyone, thanks for joining us this afternoon.", start: ${now}, at: ${now + 2500} });`);
+  await waitFor(() => requests.slice(sent).filter(isGated).length === 1);
+  await sleep(1500);
+  assert.equal(requests.slice(sent).filter(isGated).length, 1, "still one");
+  assert.equal(await run(`return answers.length;`), count);
+  // A short line isn't worth a check on its own.
+  await run(`turn = null; onTranscript({ role: "them", text: "Okay, great.", start: ${now + 5000}, at: ${now + 6000} });`);
+  await sleep(800);
+  assert.equal(requests.slice(sent).filter(isGated).length, 1, "under five words: no check");
+  await run(`turn = null;`);
 });
 
 // The last "ask id=" line in the app's log.

@@ -8,9 +8,18 @@ const QUESTION_START = /^(?:(?:so|and|okay|ok|alright|right|well|now|um|uh)[,.]?
 function isQuestion(text) {
   const t = text.trim();
   if (/\?\s*$/.test(t) || QUESTION_START.test(t)) return true;
+  // An announced question: "My very first question for you is, tell me about
+  // yourself", "The next question is…", "Question two: …". Interviewers lead
+  // with these, and what follows is the question whatever its wording.
+  if (QUESTION_ANNOUNCED.test(t)) return true;
   const sentences = t.split(/(?<=[.!?])\s+|,\s+(?=(?:(?:so|and|but)\s+|(?:what i'd like|what i'm asking|what i'm getting at|what i mean is|what we want|where i'd like|where i want|where we'd like|what i want|what i'm looking for|what we're looking for|how would you|how do you|what would you|what do you|how about|what about|what if)\b))/i);
-  return sentences.some((sentence) => QUESTION_START.test(sentence.replace(/^(?:so|and|but)\s+/i, "")));
+  if (sentences.some((sentence) => QUESTION_START.test(sentence.replace(/^(?:so|and|but)\s+/i, "")))) return true;
+  // A question after a lead-in clause: "Okay, so, tell me about…", "Great;
+  // walk me through…", "One more thing - how would you…".
+  const clauses = t.split(/\s*[,;:]\s+|\s+[-–]\s+/);
+  return clauses.length > 1 && clauses.slice(1).some((clause) => QUESTION_START.test(clause.replace(/^(?:so|and|but)\s+/i, "")));
 }
+const QUESTION_ANNOUNCED = /\b(?:(?:my|our|the|your|a|one|another)\s+)?(?:(?:very\s+)?(?:first|next|last|final|second|third|fourth|fifth|following|other|follow-up|follow up)\s+)?question(?:\s+(?:for|to)\s+(?:you|u))?\s+(?:is|would be|will be|i have(?: for you)? is)\b|\bquestion\s+(?:number\s+)?(?:\d+|one|two|three|four|five|six|seven|eight|nine|ten)\s*[:.,]/i;
 
 // The question the Answer button sends ({ text, at } or null), after a new
 // line from the other side (the mic is never used for questions). Clicking

@@ -230,3 +230,25 @@ test("isHardQuestion: story questions stay quick, but a hard follow-up in the sa
   ]) assert.equal(isHardQuestion(q), false, q);
   assert.equal(isHardQuestion("Tell me about a time you debugged prod. How would you design it now?"), true);
 });
+
+test("isQuestion: announced questions and questions after a lead-in clause", () => {
+  for (const q of [
+    "My very first question for you is, tell me about yourself.",
+    "My next question is what motivates you.",
+    "The last question is about your goals.",
+    "Question two: your greatest strength.",
+    "The next question I have for you is why this company.",
+    "Okay, so, tell me about a time you failed.",
+    "Great, walk me through your resume.",
+    "One more thing - how would you handle conflict.",
+  ]) assert.equal(isQuestion(q), true, q);
+  // Lines from a real session's intro, and other statements, stay statements.
+  for (const q of [
+    "Hi, I'm Abby, and welcome back to the Life Work Balance channel.",
+    "This will be nine different questions, and you will have time to answer.",
+    "Just note that these questions are not designed for a specific role.",
+    "So let's jump into it.",
+    "That was a great question, thanks.",
+    "Yesterday, we shipped the release.",
+  ]) assert.equal(isQuestion(q), false, q);
+});

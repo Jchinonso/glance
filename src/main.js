@@ -10,7 +10,7 @@ import { caveman, keepsFacts } from "./compress.js";
 import { DEFAULT_BASE_URL, downloadModel, findModel, MODELS } from "./models.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
-import { answerSystemPrompt, ask, compressInstructions, describeError, splitKeys, summarizeSession } from "./assistant.js";
+import { answerSystemPrompt, ask, compressInstructions, describeError, isNoAnswer, splitKeys, summarizeSession } from "./assistant.js";
 import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, MOST_CAPABLE_ANTHROPIC_MODEL, PROVIDERS, supportsEffort } from "./providers.js";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -45,6 +45,9 @@ process.on("unhandledRejection", (e) => log("unhandled rejection:", e));
 const TRANSCRIPT_LIMIT = 60; // lines sent to the model
 const TRANSCRIPT_SYNC = 500; // lines the window gets when it (re)loads
 const PREVIOUS_LIMIT = 3; // earlier answers sent for follow-up context
+// A gated ask's reply is held until this many non-space characters arrive, so
+// "<none>" (6) is caught before anything shows.
+const GATE_CHARS = 8;
 const HEARD_CONTEXT_MS = 60000; // a line heard this recently is what an untyped ask answered
 // Interviews need more: answers must stay consistent and not reuse stories.
 const INTERVIEW_PREVIOUS_LIMIT = 8;
@@ -411,7 +414,7 @@ function state() {
     // The environment variable the key comes from, when Glance didn't save
     // it: Remove can't take it away.
     keyFromEnv: !savedKey() && apiKey() ? KEY_ENV[config.provider] : null,
-    busy: !!current,
+    busy: !!current && !current.checking,
     savingNotes,
     spend,
     shortcuts: shortcuts(),
@@ -631,8 +634,10 @@ async function captureScreen() {
 // heard: the question came from the call transcript, so an automatic screenshot
 // would only add tokens. hard: a heard question that needs thinking (design,
 // code, estimates…), answered at Depth. deep: Think harder, which thinks even
-// when Depth is Quick.
-async function runAsk(question, { heard = false, heardAt = null, hard = false, deep = false } = {}) {
+// when Depth is Quick. gated: auto-answer's end-of-turn check on what the
+// interviewer said when no question was recognised; the model replies <none>
+// when there's nothing to answer, and then nothing is shown (see GATE_CHARS).
+async function runAsk(question, { heard = false, heardAt = null, hard = false, deep = false, gated = false } = {}) {
   const startedAt = Date.now();
   if (current) current.abort();
   if (!canAsk()) {
@@ -645,9 +650,11 @@ async function runAsk(question, { heard = false, heardAt = null, hard = false, d
   const q = (question || "").trim();
   let cancelled = false;
   // Cancellable from the start, including while the screenshot is taken.
-  current = { id, abort: () => (cancelled = true) };
+  // checking: a gated ask that hasn't decided yet. It isn't shown as busy, so
+  // a turn with nothing to answer leaves no trace in the window.
+  current = { id, abort: () => (cancelled = true), checking: gated };
   broadcastState();
-  send("answer-start", { id, question: q });
+  if (!gated) send("answer-start", { id, question: q });
 
   // Screenshots the user attached win; otherwise grab the screen now if enabled.
   let screenshots = shots.map((s) => s.data);
@@ -678,8 +685,33 @@ async function runAsk(question, { heard = false, heardAt = null, hard = false, d
   // Spoken questions answer at Quick unless they look hard; Depth applies to
   // typed, screen and hard questions. Think harder goes at least to Balanced.
   const effort = deep ? (config.effort === "low" ? "medium" : config.effort) : think ? config.effort : "low";
-  log(`ask id=${id} heard=${heard} hard=${hard} deep=${deep} think=${think} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${effort} depth=${config.effort} screenshots=${screenshots.length}`);
+  log(`ask id=${id} heard=${heard} hard=${hard} deep=${deep} think=${think} gated=${gated} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${effort} depth=${config.effort} screenshots=${screenshots.length}`);
   let firstToken = false;
+  // A gated ask holds its first characters until it's clear whether they're
+  // <none> (skip) or the start of an answer (shown from then on).
+  let shown = !gated;
+  let skipped = false;
+  let stopped = false; // replaced by a newer ask or stopped: a check that hasn't decided never shows
+  const decide = (done = false) => {
+    if (shown || skipped || stopped) return;
+    const ms = Date.now() - startedAt;
+    if (!text.trim() || isNoAnswer(text, done)) {
+      skipped = true;
+      log(`turn check id=${id} result=none words=${q.split(/\s+/).filter(Boolean).length} ms=${ms}`);
+      return job?.abort();
+    }
+    shown = true;
+    log(`turn check id=${id} result=answer ms=${ms}`);
+    if (current?.id === id) current.checking = false;
+    broadcastState();
+    send("answer-start", { id, question: q, gated: true });
+    send("answer-delta", { id, text });
+  };
+  const skip = (usage) => {
+    if (usage) addUsage(usage, model);
+    log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=${usage?.output ?? 0} skipped=true`);
+    send("answer-skipped", { id });
+  };
   const job = ask({
     provider: llm,
     model,
@@ -694,19 +726,37 @@ async function runAsk(question, { heard = false, heardAt = null, hard = false, d
     resume: config.resume,
     jobDescription: config.jobDescription,
     profile: profile(),
+    gated,
     onText: (delta) => {
+      if (skipped) return;
       text += delta;
       if (!firstToken) {
         firstToken = true;
         log(`first token id=${id} ms=${Date.now() - startedAt}`);
       }
-      send("answer-delta", { id, text: delta });
+      if (shown) return send("answer-delta", { id, text: delta });
+      if (text.replace(/\s/g, "").length >= GATE_CHARS) decide();
     },
   });
-  current = { id, abort: () => job.abort() };
+  current = { id, abort: () => ((stopped = true), job.abort()), checking: gated && !shown };
   broadcastState();
   try {
     const { result, problem } = await job.done;
+    // A short reply that ended before GATE_CHARS: decide on all of it.
+    if (!problem) decide(true);
+    else if (!shown && !skipped && !stopped) {
+      shown = true;
+      log(`turn check id=${id} result=answer ms=${Date.now() - startedAt}`);
+      send("answer-start", { id, question: q, gated: true });
+      if (text) send("answer-delta", { id, text });
+    }
+    if (skipped) return skip(result.usage);
+    if (!shown) {
+      // Stopped before it decided, but the reply had already arrived.
+      addUsage(result.usage, model);
+      log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=${result.usage.output} aborted=true`);
+      return send("answer-end", { id, aborted: true });
+    }
     if (text) answers.push({ id, question: q, context, answer: text });
     const u = result.usage;
     const cost = addUsage(u, model);
@@ -715,9 +765,14 @@ async function runAsk(question, { heard = false, heardAt = null, hard = false, d
     send("answer-end", { id, error: problem, quick: heard && !think, usage: { input: u.input + u.cacheRead + u.cacheWrite, output: u.output, cost, model: llm.name(model) } });
   } catch (e) {
     const aborted = isAbort(e);
+    // Aborted on <none>: no usage arrives after an abort.
+    if (skipped && aborted) return skip(null);
     if (!aborted) log("answer failed:", e);
-    // A stopped answer still shows, so keep it for follow-ups and notes.
-    if (aborted && text) answers.push({ id, question: q, context, answer: text, stopped: true });
+    // A failed check that never showed: show the error like any answer's.
+    if (!aborted && !shown) send("answer-start", { id, question: q, gated: true });
+    // A stopped answer still shows, so keep it for follow-ups and notes. A
+    // check stopped before deciding (a newer ask replaced it) never showed.
+    if (aborted && text && shown) answers.push({ id, question: q, context, answer: text, stopped: true });
     log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=0 aborted=${aborted}`);
     send("answer-end", { id, error: aborted ? null : describeError(llm, e, model), aborted, quick: heard && !think });
   } finally {
@@ -1054,7 +1109,7 @@ ipcMain.handle("pause-shortcuts", (_e, paused) => {
 });
 
 ipcMain.handle("get-state", () => ({ ...state(), transcript: transcript.slice(-TRANSCRIPT_SYNC) }));
-ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard, heardAt: options?.heardAt ?? null, hard: !!options?.hard, deep: !!options?.deep }));
+ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard, heardAt: options?.heardAt ?? null, hard: !!options?.hard, deep: !!options?.deep, gated: !!options?.gated }));
 // Reads a resume or job description file for the form to show; nothing is
 // saved until the user presses Save there.
 ipcMain.handle("import-doc", async (_e, kind) => {

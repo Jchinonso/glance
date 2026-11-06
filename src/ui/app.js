@@ -523,6 +523,7 @@ async function submit({ form = false } = {}) {
   // Typed while an answer streams: send it now (the current answer stops and stays).
   autoAnswerPending = false;
   lastAutoQuestion = null;
+  turnCheckPending = false; // replaced by this ask
   $("question").value = "";
   // If Listen stops during the wait, the question waited for (with the last
   // words still being transcribed) is still the one asked.
@@ -556,6 +557,7 @@ let deepPending = false;
 function thinkHarder(a) {
   autoAnswerPending = false;
   lastAutoQuestion = null;
+  turnCheckPending = false;
   view = "answers";
   g.log?.(`think harder id=${a.id}`);
   deepPending = true; // the next answer-start is this one: it says "Thinking it through…" while empty
@@ -586,7 +588,7 @@ function watchForQuestion() {
     if (!autoAnswerOn() || !pendingQuestion || waitingForQuestion) return stopWatching();
     const typing = $("question").value.trim() && Date.now() - questionTypedAt < TYPING_HOLD_MS;
     if (own || typing || panel) return; // keep watching
-    if (await stillHearing()) return void (quietSince = null);
+    if (await stillHearing()) return void (turnQuietSince = null);
     quietSince ??= Date.now();
     if (Date.now() - quietSince < QUIET_MS) return;
     stopWatching();
@@ -596,6 +598,7 @@ function watchForQuestion() {
     lastAutoQuestion = { ...pendingQuestion };
     view = "answers";
     autoAnswerPending = true;
+    turnCheckPending = false; // replaced by this ask
     const spoken = !mentionsScreen(text);
     g.ask(text, { heard: spoken, heardAt, hard: spoken && isHardQuestion(text) });
   }, 100);
@@ -605,6 +608,76 @@ function stopWatching() {
   autoTimer = null;
 }
 let autoAnswerPending = false; // the next answer-start is auto-answer's
+
+// Auto-answer at the end of the interviewer's turn, for what the rules above
+// don't recognise as a question ("My first question for you is, tell me about
+// yourself", "I'd love to hear about…"). A turn is the other side's lines since
+// the last answer started (or Listen started). Once they've gone quiet (same
+// test and same holds as watchForQuestion) and the turn has TURN_MIN_WORDS, it
+// goes to the model once as a gated ask: the model replies <none> when nothing
+// was asked (greetings, intros, the format, small talk), and then nothing shows
+// (main sends answer-skipped). A turn where the rules found a question is left
+// to watchForQuestion. A line after the check starts a new turn; while the
+// check is pending or its answer streams, the new turn carries the old one's
+// lines, so its own turn-end asks about all of it and replaces that answer.
+const TURN_MIN_WORDS = 5;
+// Quiet before the model's check. Obvious questions are answered by the rules
+// the moment they stop; this check is the fallback, so it waits out the short
+// pauses between sentences instead of sending (and cancelling) one per breath.
+const TURN_QUIET_MS = 800;
+const TURN_MAX_CHARS = 600;
+let turn = null; // { lines, ruled, checked }
+let turnTimer = null;
+let turnQuietSince = null; // when the current quiet began (reset by each new line)
+let turnCheckPending = false; // a gated ask sent that hasn't started an answer or been skipped
+let gatedTurnLines = []; // the lines that gated ask was about
+function gatedInFlight() {
+  const last = answers.at(-1);
+  return turnCheckPending || (!!last?.gated && last.status === "streaming");
+}
+function noteTurn(l) {
+  if (l.role !== "them") return;
+  if (!turn || turn.checked) turn = { lines: gatedInFlight() ? [...gatedTurnLines] : [], ruled: false, checked: false };
+  turn.lines.push(l);
+  // Handled by the rules only while a detected question is still pending: if
+  // that question was dropped without an answer (the talk moved on), the
+  // turn's end gets the model's check like any other.
+  turn.ruled = !!pendingQuestion;
+  turnQuietSince = null; // they spoke: the quiet starts again
+}
+function turnText() {
+  const text = turn.lines.reduce((all, l) => joinPieces(all, l.text.trim()), "");
+  return text.length > TURN_MAX_CHARS ? text.slice(-TURN_MAX_CHARS).replace(/^\S*\s+/, "") : text;
+}
+const turnOpen = () => autoAnswerOn() && !!turn && !turn.checked && !turn.ruled && !pendingQuestion && !waitingForQuestion;
+function watchTurn() {
+  if (turnTimer || !turnOpen()) return;
+  turnQuietSince = null;
+  turnTimer = setInterval(async () => {
+    if (!turnOpen()) return stopTurnWatch();
+    const own = state.busy && autoAnswerId !== answers.at(-1)?.id;
+    const typing = $("question").value.trim() && Date.now() - questionTypedAt < TYPING_HOLD_MS;
+    if (own || typing || panel) return;
+    if (await stillHearing()) return void (quietSince = null);
+    if (!turnOpen()) return stopTurnWatch(); // changed during the await
+    turnQuietSince ??= Date.now();
+    if (Date.now() - turnQuietSince < TURN_QUIET_MS) return;
+    stopTurnWatch();
+    const text = turnText();
+    const words = text.split(/\s+/).filter(Boolean).length;
+    if (words < TURN_MIN_WORDS) return; // too little to check; a new line starts watching again
+    turn.checked = true;
+    turnCheckPending = true;
+    gatedTurnLines = turn.lines;
+    const heardAt = turn.lines.at(-1).at;
+    g.log?.(`turn check sent words=${words} quietWaitMs=${Date.now() - heardAt}`);
+    g.ask(text, { heard: true, heardAt, hard: isHardQuestion(text), gated: true });
+  }, 100);
+}
+function stopTurnWatch() {
+  clearInterval(turnTimer);
+  turnTimer = null;
+}
 
 let wasListening = false; // as last reported by the app (the UI tests fake state.listening)
 g.on("state", (s) => {
@@ -622,6 +695,10 @@ g.on("state", (s) => {
     if (!waitingForQuestion) pendingQuestion = null;
     lastAutoQuestion = null;
     stopWatching();
+    turn = null;
+    turnCheckPending = false;
+    gatedTurnLines = [];
+    stopTurnWatch();
   }
   wasListening = !!s.listening;
   // Interview mode just lost its resume (switched on without one, or the
@@ -664,21 +741,32 @@ function onTranscript(l) {
       lastAutoQuestion = null;
     }
     logQuestionChange(before, pendingQuestion, l.text);
+    noteTurn(l);
   }
   renderStrip();
   renderTranscriptLine(l);
   watchForQuestion();
+  watchTurn();
 }
 g.on("transcript", onTranscript);
 g.on("focus-input", () => $("question").focus());
 g.on("submit", submit);
 g.on("snap-submit", snapSubmit);
 
-g.on("answer-start", ({ id, question }) => {
-  answers.push({ id, question, text: "", status: "streaming", auto: autoAnswerPending, deep: deepPending });
+// gated: a turn-end check that turned out to have something to answer.
+g.on("answer-start", ({ id, question, gated }) => {
+  const auto = autoAnswerPending || !!gated;
+  answers.push({ id, question, text: "", status: "streaming", auto, gated: !!gated, deep: deepPending });
   deepPending = false;
-  autoAnswerId = autoAnswerPending ? id : null;
+  autoAnswerId = auto ? id : null;
   autoAnswerPending = false;
+  if (gated) turnCheckPending = false;
+  // A new turn starts here, except one already under way that carries this
+  // check's lines (they carried on while it was being checked).
+  if (!(gated && turn && !turn.checked)) {
+    turn = null;
+    stopTurnWatch();
+  }
   answerView = state.compactAnswers ? "compact" : "full";
   editingSaid = false;
   page = answers.length - 1;
@@ -698,6 +786,10 @@ g.on("answer-start", ({ id, question }) => {
   } catch {}
   renderStage();
   $("stage").scrollTop = 0;
+});
+// A turn-end check found nothing to answer: nothing shows or changes.
+g.on("answer-skipped", () => {
+  turnCheckPending = false;
 });
 g.on("answer-delta", ({ id, text }) => {
   const a = answers.find((x) => x.id === id);
@@ -1269,6 +1361,7 @@ $("clearBtn").addEventListener("click", () => {
   page = -1;
   heard = [];
   pendingQuestion = null;
+  turn = null;
   $("transcript").querySelectorAll(".line").forEach((n) => n.remove());
   $("transcriptEmpty").hidden = false;
   setMenu(false);

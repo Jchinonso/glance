@@ -1,6 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 
-const channels = ["state", "transcript", "answer-start", "answer-delta", "answer-end", "notice", "focus-input", "submit", "snap-submit"];
+const channels = ["state", "transcript", "answer-start", "answer-delta", "answer-end", "answer-skipped", "notice", "focus-input", "submit", "snap-submit"];
 
 contextBridge.exposeInMainWorld("glance", {
   on(channel, fn) {

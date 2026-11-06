@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { ask, HUMAN_VOICE, splitKeys, summarizeSession, systemPrompt } from "../src/assistant.js";
+import { ask, GATE, HUMAN_VOICE, splitKeys, summarizeSession, systemPrompt } from "../src/assistant.js";
 
 test("resume and job description go with every style, word for word", () => {
   const resume = "Led the billing migration, cut invoice errors 40%.";
@@ -95,4 +95,34 @@ test("an answer cut short is marked as such for follow-ups", async () => {
   const previous = [{ question: "Walk me through the migration.", answer: "**We moved billing to Postgres.**\n\nFirst we", stopped: true }];
   await ask({ provider, model: "m", question: "", transcript: [], previous, screenshots: [], effort: "low", style: "interview", onText() {} }).done;
   assert.match(sent, /First we \[stopped before the end\]/);
+});
+
+test("a gated ask adds the turn check to the user message and leaves the system prompt alone", () => {
+  const sent = (gated) => {
+    let params;
+    const provider = { name: () => "test", stream: (p) => ((params = p), { done: new Promise(() => {}), abort() {} }) };
+    ask({ provider, model: "m", question: "Hi, I'm Abby, welcome to the call.", transcript: [], previous: [], screenshots: [], effort: "low", style: "interview", customInstructions: "Be warm.", resume: "Jane Doe", jobDescription: "Engineer", gated, onText() {} });
+    return params;
+  };
+  const gated = sent(true);
+  const plain = sent(false);
+  assert.equal(gated.system, plain.system, "system prompt byte-identical, so the cache keeps working");
+  assert.ok(!gated.system.includes("<none>"));
+  const text = gated.parts.at(-1).text;
+  assert.ok(text.endsWith(GATE), text);
+  assert.match(GATE, /reply exactly <none> and nothing else/);
+  assert.match(text, /Interviewer's latest turn: Hi, I'm Abby/);
+  assert.ok(!plain.parts.at(-1).text.includes("<none>"));
+  assert.ok(!plain.parts.at(-1).text.includes(GATE));
+  assert.match(plain.parts.at(-1).text, /Question: Hi, I'm Abby/);
+});
+
+test("isNoAnswer: the skip reply in the formats models use, never a real answer", async () => {
+  const { isNoAnswer } = await import("../src/assistant.js");
+  for (const t of ["<none>", " <none>", "`<none>`", '"<none>"', "**<none>**", "<None>", "< none >", "<none> "]) assert.equal(isNoAnswer(t), true, t);
+  for (const t of ["None.", "none", "(none)", "None!"]) {
+    assert.equal(isNoAnswer(t, true), true, `${t} (whole reply)`);
+    assert.equal(isNoAnswer(t, false), false, `${t} (still streaming)`);
+  }
+  for (const t of ["None of my previous roles used Kafka", "Nonetheless, I", "I led the migration", ""]) assert.equal(isNoAnswer(t, true), false, t);
 });
