@@ -81,7 +81,7 @@ Nothing else to install: both speech engines (WhisperKit, and whisper.cpp as the
 - A Mac with Apple Silicon (the build targets `darwin-arm64`).
 - macOS 14 or later for the main speech engine (WhisperKit). On macOS 13 Glance uses whisper.cpp.
 - An internet connection on first launch, for the 148 MB starter model; the upgrade (about 650 MB, or 490 MB on macOS 13) then downloads in the background.
-- To build from source: Xcode (Swift 5.10 or later), [Homebrew](https://brew.sh) and Node.js 20 or later. The downloaded app needs none of them.
+- To build from source: Xcode (Swift 5.10 or later), CMake (`brew install cmake`, via [Homebrew](https://brew.sh)) and Node.js 20 or later. The downloaded app needs none of them.
 - An API key for Anthropic or an OpenAI-compatible service, or a local model server (Ollama, LM Studio) that needs no key.
 
 ## Using Glance
@@ -324,7 +324,7 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
 - **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
 - **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt. Until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help:
   - Check Glance is on under **Screen & System Audio Recording** and under **System Audio Recording Only**.
-  - Building from source: make sure `brew install whisper-cpp` ran and Xcode is installed before `npm run package`.
+  - Building from source: make sure CMake (`brew install cmake`) and Xcode are installed before `npm run package`.
 - **Answers are slow.** Everyday spoken questions always answer at Quick. If hard, typed or screenshot questions feel slow:
   - Set **Settings › Answers › Depth** to **Quick**, and press **Think harder** only when an answer looks shaky.
   - Use a faster model: Haiku 5.5 starts in about a second (see [Choosing a model](#choosing-a-model)).
@@ -399,9 +399,9 @@ Mac audio ──► speech detection ──► Whisper (WhisperKit on the Neural
 
 - `src/main.js`: window, shortcuts, screenshots, keychain, settings, notes, logging, the test mode.
 - `src/whisperkit.js` and `native/glance-whisper/`: the main speech engine. `glance-whisper` is a small Swift program built on [WhisperKit](https://github.com/argmaxinc/WhisperKit) that downloads Whisper large-v3 turbo (`openai_whisper-large-v3-v20240930_turbo_632MB`), loads it with Core ML on the Neural Engine (encoder and decoder on `.cpuAndNeuralEngine`, the mel spectrogram on the CPU) and transcribes 16 kHz WAV pieces. Once the starter model is in, Glance downloads the model and loads it in the background (whisper.cpp transcribes meanwhile) and talks to the helper in JSON lines over stdin and stdout. A helper that crashes is restarted; after 3 crashes in a session, or a failed load, Glance uses whisper.cpp until it's reopened.
-- `src/audio.js`: system audio capture (audiotee), speech detection, and the whisper.cpp fallback. `whisper-server` keeps its model loaded (only while WhisperKit isn't doing the work) and restarts if it dies. The app runs its own bundled copy of whisper.cpp, falling back to Homebrew's (for `npm run dev`).
+- `src/audio.js`: system audio capture (audiotee), speech detection, and the whisper.cpp fallback. `whisper-server` keeps its model loaded (only while WhisperKit isn't doing the work) and restarts if it dies. The app runs its own bundled whisper.cpp (built by `npm run package`), falling back to Homebrew's for `npm run dev` if it hasn't been built.
 - `scripts/build-whisperkit.sh`: builds `glance-whisper` (`swift build -c release --arch arm64`), copies it into `vendor/whisperkit` and signs it ad hoc.
-- `scripts/bundle-whisper.sh`: copies `whisper-server`, `whisper-cli`, their libraries and ggml's compute backends (Metal, CPU, BLAS) from Homebrew into `vendor/whisper`, rewrites their library paths to stay inside the app, and signs them. Licenses are included in `vendor/whisper/licenses`.
+- `scripts/bundle-whisper.sh`: builds whisper.cpp from source at a pinned release (cached in `.cache/whisper.cpp`) into `vendor/whisper`: `whisper-cli` and `whisper-server`, each one self-contained program with whisper.cpp and its matching ggml linked in (Metal, CPU, Accelerate; no OpenMP), signed ad hoc. Building both from one source keeps them in step; copying Homebrew's separately upgraded libraries once crashed the GPU and CPU paths. The license is in `vendor/whisper/licenses`.
 - `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
 - `src/providers.js`: Anthropic and OpenAI-compatible adapters behind one interface. Adding a provider means adding one adapter.
 - `src/compress.js`: mechanical compression of the transcript and earlier answers sent with every question; numbers, code, quotes and negations are never touched.
@@ -411,8 +411,8 @@ Mac audio ──► speech detection ──► Whisper (WhisperKit on the Neural
 ## Build from source
 
 ```sh
-# 1. The fallback transcription engine; the build copies it into the app (vendor/whisper)
-brew install whisper-cpp
+# 1. CMake, used to build the fallback transcription engine (whisper.cpp) from source
+brew install cmake
 # The main engine (glance-whisper, WhisperKit) is built with Swift: install Xcode
 # and run `sudo xcode-select -s /Applications/Xcode.app` once. Its first build
 # fetches WhisperKit from GitHub.

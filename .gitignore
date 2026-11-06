@@ -5,3 +5,4 @@ models/
 vendor/
 .plan/
 native/glance-whisper/.build/
+.cache/
