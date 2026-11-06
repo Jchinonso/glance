@@ -17,6 +17,8 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 - [Interview mode](#interview-mode)
 - [Settings](#settings)
 - [AI providers](#ai-providers)
+- [Choosing a model](#choosing-a-model)
+- [Depth and Think harder](#depth-and-think-harder)
 - [Troubleshooting](#troubleshooting)
 - [Privacy and data](#privacy-and-data)
 - [Screen sharing: what hiding does and doesn't do](#screen-sharing-what-hiding-does-and-doesnt-do)
@@ -134,7 +136,7 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 
 **Transcription.** Under **Settings › General › Transcription**, **Accurate** (the default) uses small.en (488 MB): much better with technical terms, accents, noise and quiet speakers, and still faster than real time on Apple Silicon. **Fast** uses base.en (148 MB), about twice as quick per piece but makes more mistakes. It is downloaded only the first time Fast is picked; Accurate is used until it's ready. Accurate is recommended for interviews: a misheard question can't be answered well.
 
-**Depth.** **Settings › Answers › Depth** has three settings. **Quick** starts answers soonest and is recommended for live calls. **Balanced** and **Thorough** let the model think first, adding seconds before the first word. Spoken questions answer at Quick unless they look hard (designing a system, writing code, algorithms, complexity, estimates, scale, trade-offs, debugging, edge cases), which use Depth (story questions such as "tell me about a time you debugged…" stay at Quick) like typed questions and questions with a screenshot do. On a spoken answer given at Quick, the **Think harder** button at the top of the answer (or ⌘↵ with nothing new heard) answers the same question again with more thinking, at Balanced or above, and keeps the first answer. On OpenAI-compatible servers Depth is sent as the reasoning level (`reasoning_effort`, or `reasoning.effort` on OpenRouter; Quick tries `none`, then `minimal`, then `low`), and models that don't reason ignore it.
+**Depth.** **Settings › Answers › Depth** (Quick, Balanced, Thorough) sets how long the model may think on questions that need it. Everyday spoken questions stay fast either way. See [Depth and Think harder](#depth-and-think-harder) for which questions use it, and [Choosing a model](#choosing-a-model) for recommended settings.
 
 ## AI providers
 
@@ -152,11 +154,82 @@ Models are listed from the provider itself: Anthropic's Models API, or the serve
 
 On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. On OpenRouter, Claude models cache the résumé, job description and instructions for an hour the same way, and Gemini models for 5 minutes (other models there cache automatically). Depth's thinking control is Anthropic-specific (OpenAI-compatible servers get it as a reasoning level). Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
 
+## Choosing a model
+
+Glance works with any model your provider lists, but for live calls three things matter: how soon the first word appears, whether the model reads screenshots, and how well it reasons through code and design. These are the setups we recommend.
+
+On **Anthropic's own API**:
+
+| Interview | Model | Depth | Screenshot every question |
+| --- | --- | --- | --- |
+| Behavioral, HR or mixed | **Haiku 5.5** | Quick | Off |
+| Technical (coding, debugging, system design) | **Sonnet 5.5** | Balanced | On when the problem is on screen |
+| Hardest technical rounds | **Opus 5.5** | Balanced | On when the problem is on screen |
+| Lowest cost | **Haiku 5.5** | Quick | Off |
+
+The same setups on **OpenRouter** (one key for many companies' models), with a cheaper alternative for each:
+
+| Interview | OpenRouter model | Cheaper alternative | Depth | Screenshot every question |
+| --- | --- | --- | --- | --- |
+| Behavioral, HR or mixed | `anthropic/claude-haiku-5.5` | `qwen/qwen3.7-flash` (untested) | Quick | Off |
+| Technical (coding, debugging, system design) | `anthropic/claude-sonnet-5.5` | `google/gemini-3.8-flash` | Balanced | On when the problem is on screen |
+| Hardest technical rounds | `anthropic/claude-opus-5.5` | `openai/gpt-5.4` (slower) | Balanced | On when the problem is on screen |
+| Lowest cost | `anthropic/claude-haiku-5.5` | `qwen/qwen3.7-flash` (untested) | Quick | Off |
+
+To set up OpenRouter: in **Settings › Answers › AI provider** choose **OpenAI-compatible**, type `openrouter.ai` as the server address (Glance fills in `https://openrouter.ai/api/v1`), pick the model from the list, paste your OpenRouter key from [openrouter.ai/keys](https://openrouter.ai/keys), and press **Test connection**.
+
+For every interview, keep **Settings › General › Transcription** on **Accurate** and turn on **Interview mode** with auto-answer.
+
+**Anthropic or OpenRouter.** Both cache your résumé, job description and instructions and warm the cache when you press Listen (on OpenRouter for Claude models for an hour and Gemini models for 5 minutes; other models there cache automatically). For Claude models, Anthropic's own API (a key from [console.anthropic.com](https://console.anthropic.com)) is still the best fit: Glance controls thinking exactly, retries refused requests on another model, and shows costs in dollars. OpenRouter gives one key for hundreds of models from many companies, sends Depth as each model's reasoning level, and shows tokens rather than dollars.
+
+On OpenRouter, pick a model that reads images if you use screenshots. Some good choices, with OpenRouter's prices in dollars per million tokens as of November 2026 (they change, so check openrouter.ai):
+
+| OpenRouter model | Input | Output | Notes |
+| --- | --- | --- | --- |
+| `anthropic/claude-haiku-5.5` | 0.10 | 0.50 | Cheapest good all-rounder, fast |
+| `openai/gpt-5.4-mini` | 0.75 | 4.50 | Mid-priced |
+| `google/gemini-3.8-flash` | 0.83 | 4.12 | Strong at screenshots and code for the price |
+| `anthropic/claude-sonnet-5.5` | 2.00 | 10.00 | Best balance for technical rounds |
+| `openai/gpt-5.4` | 2.50 | 15.00 | Strong, but writes slowly through OpenRouter (about 45 tokens a second in our tests) |
+| `anthropic/claude-opus-5.5` | 4.00 | 20.00 | Most capable, for the hardest problems |
+
+A typical answer sends about 8,000 tokens (instructions, résumé, job description and transcript, mostly cached after the first question) and gets about 400 back, so an answer costs roughly a tenth of a cent on Haiku 5.5 and about two cents on Sonnet 5.5.
+
+**Measured speed** (time from asking to the first word, on a typical connection):
+
+| Model | Spoken question (Quick) | Question that thinks (Balanced) |
+| --- | --- | --- |
+| Haiku 5.5 | about 1 s | about 6 to 9 s |
+| Sonnet 5.5 | about 2 s | several seconds more |
+| `openai/gpt-5.4` on OpenRouter | about 1.5 to 2 s, full answer about 8 s | about 14 s |
+
+## Depth and Think harder
+
+Depth never changes on its own. For each question Glance decides whether to answer at **Quick** (no thinking, fastest) or at **your Depth setting**:
+
+| Question | Level used |
+| --- | --- |
+| Spoken, everyday ("tell me about yourself", "what is the event loop") | Quick |
+| Spoken story ("tell me about a time you…") | Quick |
+| Spoken and hard: designing a system, writing code, algorithms, complexity, estimates, scale, trade-offs, debugging, edge cases | Your Depth |
+| Typed, a screenshot, or a spoken question about the screen | Your Depth |
+| **Think harder** | Your Depth, but at least Balanced |
+
+So Depth only decides how hard Glance thinks when a question needs it:
+
+- **Quick:** nothing thinks unless you press Think harder. Everything starts in about a second, but hard questions are answered without working through them, which is fine for concepts and most design talk and riskier for algorithm puzzles, complexity, estimates and tricky edge cases.
+- **Balanced** (recommended for technical interviews): hard, typed and screenshot questions think for a few seconds first; everyday spoken questions stay fast.
+- **Thorough:** thinks longest. Worth it only for very hard problems.
+
+**Think harder.** A spoken answer given at Quick has a **✦ Think harder** button at the top, next to Key points. Press it, or the Answer shortcut (⌘↵) when nothing new has been heard, and Glance answers the same question again with thinking, at Balanced or your Depth if higher. While it works the answer says "Thinking it through…", and the quick answer stays on the previous page. With a new question already heard, ⌘↵ answers that question instead.
+
+**On OpenAI-compatible servers** Depth is sent as the reasoning level (`reasoning_effort`, or `reasoning.effort` on OpenRouter). Quick tries `none`, then `minimal`, then `low`, so each model gets its fastest setting, and models that don't reason ignore it. Glance remembers what each model accepts.
+
 ## Troubleshooting
 
 - **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
 - **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt; until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help, check Glance is on under Screen & System Audio Recording and under **System Audio Recording Only**. Building from source: make sure `brew install whisper-cpp` ran before `npm run package`.
-- **Answers are slow.** Set Settings › Answers › Depth to **Quick** (Balanced and Thorough think before answering); keep Settings › General › Transcription on Accurate unless the log shows transcription is the bottleneck; see Logs below.
+- **Answers are slow.** Everyday spoken questions always answer at Quick; if hard, typed or screenshot questions feel slow, set Settings › Answers › Depth to **Quick** and use **Think harder** only when an answer looks shaky. A faster model helps most: Haiku 5.5 starts in about a second (see [Choosing a model](#choosing-a-model)). Keep Settings › General › Transcription on Accurate unless the log shows transcription is the bottleneck; see Logs below.
 - **A question gets no answer.** Auto-answer waits while you're typing, while an answer you asked for is still streaming, or while a form or Settings is open; questions are recognized from how they're phrased, so an unusual phrasing can be missed: press **Answer** (⌘↵) to answer the latest one, and check the log for a heard line with no "question detected" after it.
 - **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Transcription for the Fast model). It resumes from where it stopped. Glance retries 3 times on its own before showing **Try again**.
 - **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
