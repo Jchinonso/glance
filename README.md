@@ -31,6 +31,7 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 
 - **Hears the question.** Glance transcribes the Mac's audio (the other side of a Zoom, Meet or Teams call) on your machine with Whisper and detects questions as they're asked. A question split by pauses is joined back together, lead-in included ("So looking at your time at Acme Pay, can you tell me about…").
 - **Answers in seconds.** Press **Answer** (⌘↵), or in Interview mode let Glance answer on its own once the interviewer finishes. If you press Answer while they're still talking, Glance waits for the rest of the question.
+- **Fast when it can be, careful when it counts.** Everyday spoken questions start in about a second; design, coding, estimates, typed questions and screenshots think first when Depth is Balanced; **Think harder** re-answers any quick answer more carefully.
 - **Sounds like you.** Interview mode answers in the first person, as natural speech, using your résumé as a case study: real roles, projects and numbers, no placeholders. A short note lists anything Glance added so you can check it.
 - **Glanceable.** Each long interview answer carries 3 or 4 key phrases. Switch an answer to **Key points** to see just the opening line and the phrases while you talk.
 - **Keeps up with you.** If you said something different from the suggestion, press **I said something else** and type a few words; follow-ups build on what you actually said.
@@ -50,7 +51,7 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 | ![New interview prompt](docs/images/new-interview.png) | ![Answer as key points](docs/images/key-points.png) |
 | **Each new interview.** Keep the same role or add its job description. | **Key points.** The opening line and the beats of the answer. |
 | ![Meeting or Interview menu](docs/images/mode-menu.png) | ![Light mode](docs/images/light-mode.png) |
-| **Answer mode.** Meeting or Interview, one click away. | **Light mode.** Follows macOS. |
+| **Answer mode.** Meeting or Interview, one click away. | **Light mode.** Follows macOS, or set it in Settings › General › Appearance. |
 | ![Settings, Interview tab](docs/images/settings-interview.png) | ![Settings, Answers tab](docs/images/settings-answers.png) |
 | **Settings › Interview.** Interview mode, auto-answer, key points, résumé. | **Settings › Answers.** Provider, model, depth and style. |
 
@@ -98,7 +99,7 @@ macOS asks for **Screen & System Audio Recording** permission the first time you
 | Default shortcut | Action |
 | --- | --- |
 | ⌘⇧\\ | Start or stop listening |
-| ⌘↵ | Answer the question just heard, or what you've typed |
+| ⌘↵ | Answer the question just heard, or what you've typed; with nothing new heard, Think harder on the last quick answer |
 | ⌘⇧2 | Screenshot and answer |
 | ⌘⇧1 | Add a screenshot without asking (collect several first) |
 | ⌘\\ | Show or hide Glance |
@@ -107,7 +108,7 @@ macOS asks for **Screen & System Audio Recording** permission the first time you
 
 Shortcuts work from any app and can be changed in **Settings › General › Shortcuts**. The menu bar icon shows or hides the window; right-click it for more. Esc closes whatever panel is open.
 
-Answers stay at the top while they stream in. Older answers stay in the pager (‹ 1 of 3 ›). An answer cut short by **Stop**, a new question or a typed one is marked "Stopped before the end". Each answer shows its estimated cost.
+Answers stay at the top while they stream in. Older answers stay in the pager (‹ 1 of 3 ›). An answer cut short by **Stop**, a new question or a typed one is marked "Stopped before the end". Each answer shows its estimated cost (in dollars for the Anthropic models Glance has prices for, otherwise in tokens).
 
 ### Notes
 
@@ -236,10 +237,11 @@ So Depth only decides how hard Glance thinks when a question needs it:
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
 - **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
 - **Logs.** `~/Library/Logs/Glance/glance.log` records what happens in a session. It stays on your Mac and includes the first 80 characters of what was said.
-  - **What it records:** each heard line (speech length, `transcribeMs`, `waitMs`, `queued`, and whether it came via the server or the CLI), question detected / extended / replaced / dropped, auto-answer fired, and each answer (`sinceSpeechEndMs`, model, effort, first-token ms, total ms).
+  - **What it records:** each heard line (speech length, `transcribeMs`, `waitMs`, `queued`, and whether it came via the server or the CLI), question detected / extended / replaced / dropped, auto-answer fired, each answer (`sinceSpeechEndMs`, model, `effort` used and your `depth` setting, `hard` and `deep` for hard questions and Think harder, first-token ms, total ms, `cacheRead` and `cacheWrite`), and `prewarm` when Listen warms the cache.
   - **How to read it:**
     - Slow transcription: a long `transcribeMs` or a growing `queued` count means transcription is the bottleneck.
-    - Slow first token: a long first token points to Depth or the model.
+    - Slow first token: a long first token points to Depth or the model; `effort=medium` or `high` means that answer thought first.
+    - Cache: `cacheRead` above 0 means the résumé and instructions came from the cache.
     - Missed question: a heard line with no "question detected" after it.
 
 ## Privacy and data
@@ -247,7 +249,7 @@ So Depth only decides how hard Glance thinks when a question needs it:
 - **Audio stays on your Mac.** Transcription runs locally with Whisper. Only text (and screenshots you take or allow) is sent to your AI provider.
 - **The microphone is never recorded.** Glance hears only the Mac's audio, the other side of the call.
 - **Keys** are stored in the macOS login keychain, not in files.
-- **Where things live.** Settings are in `~/Library/Application Support/glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
+- **Where things live.** Settings are in `~/Library/Application Support/Glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
 - Glance treats the transcript, screen text, résumé and job description as data, not instructions.
 - **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
 
@@ -337,6 +339,6 @@ node scripts/screenshots.mjs   # regenerate docs/images/
 ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API interview check
 ```
 
-- **UI tests** (`test/ui.test.js`) launch the real app in test mode and drive it over the DevTools protocol: setup, every Settings tab and form, the mode menu, answers, key points, "I said something else", stopping, waiting for a question to finish, and auto-answer. Test mode (`GLANCE_TEST_DIR=<folder>`) uses its own settings folder, never touches the keychain, registers no global shortcuts and keeps its window invisible. A fake OpenAI-compatible server answers.
+- **UI tests** (`test/ui.test.js`) launch the real app in test mode and drive it over the DevTools protocol: setup, every Settings tab and form, the provider form (model dropdowns, server addresses, Test connection), the mode menu, answers, key points, "I said something else", Think harder, stopping, waiting for a question to finish, and auto-answer. Test mode (`GLANCE_TEST_DIR=<folder>`) uses its own settings folder, never touches the keychain, registers no global shortcuts and keeps its window invisible. A fake OpenAI-compatible server answers.
 - **The interview eval** (`test/interview-eval.js`) asks 21 sample interview questions against a real model and checks shape, placeholders, labels, length, key phrases and consistency. `EVAL_ONLY="salary|visa"` runs a subset; `EVAL_PROVIDER=openai EVAL_BASE_URL=…` targets another vendor. Read the answers too: checks can't judge quality.
 - **Roadmap:** see [PLAN.md](PLAN.md).
