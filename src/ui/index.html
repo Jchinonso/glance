@@ -66,7 +66,7 @@
           </div>
           <div class="ob-step" data-step="speech">
             <h1 class="ob-title">Download the speech model</h1>
-            <p class="ob-lead">Glance needs this to transcribe calls. This one-time download is about 490 MB.</p>
+            <p class="ob-lead" id="obSpeechLead">Glance needs this to transcribe calls. This one-time download is about 150 MB.</p>
             <div class="ob-progress" id="obSpeechProgress">
               <div class="ob-progress-bar"><span id="obSpeechFill"></span></div>
               <span class="ob-progress-label" id="obSpeechMeta"></span>
@@ -262,7 +262,7 @@
             <h2>Listening</h2>
             <div class="group">
               <div class="row">
-                <div class="row-text"><span>Transcription</span><small>Accurate is slower but better with accents and noise</small></div>
+                <div class="row-text"><span>Transcription</span><small id="transcriptionHint">Accurate is slower but better with accents and noise</small></div>
                 <div class="seg" id="transcription" role="radiogroup">
                   <button role="radio" data-value="fast">Fast</button>
                   <button role="radio" data-value="accurate">Accurate</button>
@@ -275,6 +275,10 @@
                   <button role="radio" data-value="light">Light</button>
                   <button role="radio" data-value="dark">Dark</button>
                 </div>
+              </div>
+              <div class="row-note" id="upgradeStatus" hidden>
+                <span id="upgradeText"></span>
+                <button type="button" class="textlink" id="upgradeRetry" hidden>Try again</button>
               </div>
               <div class="row-note" id="fastModelStatus" hidden>
                 <span id="fastModelText"></span>

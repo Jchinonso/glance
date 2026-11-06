@@ -92,7 +92,7 @@ export class Segmenter extends EventEmitter {
   }
 }
 
-function wav(pcm) {
+export function wav(pcm) {
   const header = Buffer.alloc(44);
   header.write("RIFF", 0);
   header.writeUInt32LE(36 + pcm.length, 4);
@@ -109,12 +109,23 @@ function wav(pcm) {
   return Buffer.concat([header, pcm]);
 }
 
+// How whisper.cpp runs on this Mac. The GPU (Metal) is fastest, but on some
+// Macs a Metal operation fails ("pre-allocated tensor … in a buffer (MTL0)
+// that cannot run the operation"), usually through flash attention. Glance
+// then steps down: GPU without flash attention, then CPU only, and main
+// remembers the mode that worked for next time.
+export const WHISPER_MODES = { gpu: [], "gpu-nofa": ["-nfa"], cpu: ["-ng"] };
+const MODE_ORDER = ["gpu", "gpu-nofa", "cpu"];
+// A failure that the next mode can fix: the GPU backend or a crash, not (say)
+// a missing file.
+const GPU_FAILURE = /ggml|metal|MTL\d|backend|abort|SIGABRT|SIGSEGV|SIGBUS|signal|killed/i;
+
 // Whisper hallucinates these on silence/noise; drop them.
 const NOISE = /^\s*(\[.*\]|\(.*\)|you|thank you\.?|thanks for watching!?|\.+)\s*$/i;
 
 // `prompt` primes Whisper with words to expect (tech terms, names), which fixes
 // most mishearings of jargon at no speed cost.
-export async function whisper({ modelPath, binary, prompt }, pcm) {
+export async function whisper({ modelPath, binary, prompt, flags = [] }, pcm) {
   const file = path.join(os.tmpdir(), `glance-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.wav`);
   try {
     await writeFile(file, wav(pcm));
@@ -125,11 +136,12 @@ export async function whisper({ modelPath, binary, prompt }, pcm) {
     execFile(
       binary,
       // -sns suppresses non-speech tokens, which cuts invented text on noise.
-      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-sns", "-t", "4", "-ac", AUDIO_CTX, ...(prompt ? ["--prompt", prompt] : [])],
+      ["-m", modelPath, "-f", file, "-l", "en", "-nt", "-np", "-sns", "-t", "4", "-ac", AUDIO_CTX, ...flags, ...(prompt ? ["--prompt", prompt] : [])],
       { timeout: 30000 },
-      (err, stdout) => {
+      (err, stdout, stderr) => {
         unlink(file).catch(() => {});
-        if (err) return resolve({ error: err.message });
+        // stderr carries the backend's reason (e.g. the Metal failure).
+        if (err) return resolve({ error: `${err.message}${err.signal ? ` (signal ${err.signal})` : ""}\n${String(stderr || "").slice(-2000)}` });
         const text = stdout.replace(/\s+/g, " ").trim();
         resolve({ text: NOISE.test(text) ? "" : text });
       },
@@ -160,10 +172,10 @@ export class WhisperServer {
     this.stop();
     if (!restart) this.restarts = 0;
     this.opts = opts;
-    const { modelPath, prompt } = opts;
+    const { modelPath, prompt, flags = [] } = opts;
     if (!path.isAbsolute(this.binary) || !existsSync(this.binary)) return;
     const port = 20000 + Math.floor(Math.random() * 40000);
-    const proc = spawn(this.binary, ["-m", modelPath, "-l", "en", "-nt", "-sns", "-t", "4", "-ac", AUDIO_CTX, "--host", "127.0.0.1", "--port", String(port), ...(prompt ? ["--prompt", prompt] : [])], { stdio: "ignore" });
+    const proc = spawn(this.binary, ["-m", modelPath, "-l", "en", "-nt", "-sns", "-t", "4", "-ac", AUDIO_CTX, ...flags, "--host", "127.0.0.1", "--port", String(port), ...(prompt ? ["--prompt", prompt] : [])], { stdio: "ignore" });
     proc.on("error", () => {});
     proc.on("exit", () => {
       if (this.proc === proc) this.proc = this.url = null;
@@ -235,11 +247,18 @@ function findBinary(name, bundleDir) {
 export class Listener extends EventEmitter {
   // whisperDir: the whisper.cpp build bundled with the app, if any.
   // silentAfterMs: see "silent" below.
-  constructor({ modelPath, prompt, audioteePath, whisperDir, whisperBinary = findBinary("whisper-cli", whisperDir), silentAfterMs = 15000 }) {
+  // mode: a key of WHISPER_MODES, remembered by main from an earlier fallback.
+  // whisperkit: a WhisperKit (whisperkit.js), used once its model is loaded;
+  // until then, and for whatever it can't do, whisper.cpp.
+  // kitPrompt: WhisperKit's prompt (prompt is whisper.cpp's).
+  constructor({ modelPath, prompt, kitPrompt = "", audioteePath, whisperDir, whisperBinary = findBinary("whisper-cli", whisperDir), silentAfterMs = 15000, mode = "gpu", whisperkit = null }) {
     super();
+    this.kit = null;
+    this.setWhisperKit(whisperkit);
     this.silentAfterMs = silentAfterMs;
     this.audioteePath = audioteePath;
-    this.opts = { modelPath, prompt, binary: whisperBinary };
+    this.mode = mode in WHISPER_MODES ? mode : "gpu";
+    this.opts = { modelPath, prompt, kitPrompt, binary: whisperBinary, flags: WHISPER_MODES[this.mode] };
     this.server = new WhisperServer(findBinary("whisper-server", whisperDir));
     this.pending = [];
     this.working = false;
@@ -259,20 +278,45 @@ export class Listener extends EventEmitter {
     }
   }
 
+  setWhisperKit(kit) {
+    if (kit === this.kit) return;
+    this.kit = kit;
+    // Off for the rest of the session: whisper.cpp takes over from the next segment.
+    kit?.on("failed", () => {
+      if (this.kit === kit && this.running) this.startServer();
+    });
+    // Loaded (again): whisper.cpp's model needn't stay in memory.
+    kit?.on("ready", () => {
+      if (this.kit === kit) this.server.stop();
+    });
+  }
+
+  hasWhisperCpp() {
+    return !!this.opts.modelPath && existsSync(this.opts.modelPath) && path.isAbsolute(this.opts.binary) && existsSync(this.opts.binary);
+  }
+
+  // whisper-server keeps whisper.cpp's model loaded; only needed while
+  // WhisperKit isn't doing the work.
+  startServer() {
+    if (this.kit?.state === "ready" || !this.hasWhisperCpp()) return this.server.stop();
+    this.server.start(this.opts);
+  }
+
   // Returns false (with one clear error) when a required tool is missing.
   start() {
     if (this.running) return true;
-    if (!path.isAbsolute(this.opts.binary) || !existsSync(this.opts.binary)) {
+    if (this.kit?.state === "ready") {
+      // WhisperKit does the work; whisper.cpp, if present, only fills in.
+    } else if (!path.isAbsolute(this.opts.binary) || !existsSync(this.opts.binary)) {
       this.emit("error", "Listening needs whisper-cpp. Install with: brew install whisper-cpp");
       return false;
-    }
-    if (!existsSync(this.opts.modelPath)) {
+    } else if (!this.opts.modelPath || !existsSync(this.opts.modelPath)) {
       this.emit("error", "The speech model is missing. Rebuild Glance after downloading it (see README).");
       return false;
     }
     this.running = true;
     this.reportedFailure = false;
-    this.server.start(this.opts);
+    this.startServer();
     this.them = new Segmenter();
     this.them.on("segment", (pcm) => this.enqueue(pcm));
 
@@ -311,9 +355,9 @@ export class Listener extends EventEmitter {
   }
 
   // Takes effect from the next segment; no restart needed.
-  setTranscription({ modelPath, prompt }) {
-    this.opts = { ...this.opts, modelPath, prompt };
-    if (this.running) this.server.start(this.opts);
+  setTranscription({ modelPath, prompt, kitPrompt = "" }) {
+    this.opts = { ...this.opts, modelPath, prompt, kitPrompt, flags: WHISPER_MODES[this.mode] };
+    if (this.running) this.startServer();
   }
 
   // True while the other side is mid-phrase or their last words are still
@@ -332,9 +376,37 @@ export class Listener extends EventEmitter {
     if (!this.working) this.server.stop();
   }
 
+  // Moves to the next transcription mode after a GPU failure. Returns false
+  // when there's none left (already CPU only).
+  stepDown(reason) {
+    const next = MODE_ORDER[MODE_ORDER.indexOf(this.mode) + 1];
+    if (!next) return false;
+    const from = this.mode;
+    this.mode = next;
+    this.opts = { ...this.opts, flags: WHISPER_MODES[next] };
+    if (this.running) this.startServer();
+    this.emit("mode", next, `${from} failed: ${reason}`);
+    return true;
+  }
+
   enqueue(pcm) {
     this.pending.push({ pcm, at: Date.now() });
     this.drain();
+  }
+
+  // WhisperKit's text for a segment, or null to use whisper.cpp for it. Until
+  // it's loaded (downloading, preparing in the background, or reloading after
+  // a crash) whisper.cpp does the work, so nothing waits for it.
+  async viaWhisperKit(pcm) {
+    const kit = this.kit;
+    if (kit?.state !== "ready") return null;
+    const r = await kit.transcribe(pcm, this.opts.kitPrompt || "");
+    if (!r) return null;
+    if (r.error !== undefined) {
+      this.emit("detail", `whisperkit failed: ${r.error}`);
+      return null;
+    }
+    return NOISE.test(r.text) ? "" : r.text;
   }
 
   async drain() {
@@ -344,14 +416,28 @@ export class Listener extends EventEmitter {
     while ((item = this.pending.shift())) {
       const { pcm, at } = item;
       const began = Date.now();
-      let via = "server";
-      let text = await this.server.transcribe(pcm);
+      let via = "whisperkit";
+      let text = await this.viaWhisperKit(pcm);
+      if (text === null) {
+        via = "server";
+        text = await this.server.transcribe(pcm);
+      }
       if (text === null) {
         via = "cli";
-        const r = await whisper(this.opts, pcm);
+        // No whisper.cpp model (only possible while WhisperKit is loaded).
+        const r = this.opts.modelPath ? await whisper(this.opts, pcm) : { error: "no whisper.cpp model to fall back on" };
         if (r.error) {
-          // Once per listen: a broken transcriber fails on every segment.
-          if (!this.reportedFailure) this.emit("error", `Transcription failed: ${r.error}`);
+          // The GPU failed on this Mac: try the next mode with this same piece.
+          if (GPU_FAILURE.test(r.error) && this.stepDown(r.error)) {
+            this.pending.unshift(item);
+            continue;
+          }
+          // Once per listen: a broken transcriber fails on every segment. The
+          // window gets a plain sentence; the details go to the log.
+          if (!this.reportedFailure) {
+            this.emit("detail", `transcription failed mode=${this.mode}: ${r.error}`);
+            this.emit("error", "Glance can't transcribe on this Mac right now, so it can't hear the call. Quit and reopen Glance, then press Listen. If it keeps happening, send the file glance.log from Library › Logs › Glance to whoever set Glance up.");
+          }
           this.reportedFailure = true;
           continue;
         }

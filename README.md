@@ -59,33 +59,36 @@ The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated
 
 ## Download
 
-> **Glance downloads its speech model the first time it opens.** You need an internet connection for that first launch.
+> **Glance downloads its speech models the first time it opens.** You need an internet connection for that first launch.
 
 - The DMG is about 95 MB.
-- The model (small.en, about 490 MB) comes from [Hugging Face's whisper.cpp repo](https://huggingface.co/ggerganov/whisper.cpp) into `~/Library/Application Support/Glance/models`.
-- Setup starts with a required **Download the speech model** step: **Continue** and **Skip setup** stay disabled until it finishes.
-- The download resumes after a dropped connection, is checked against its SHA-256, and offers **Try again** if it keeps failing.
-- If the model is already installed, nothing downloads; people updating from an earlier version see only this step, once.
+- **Setup downloads a 148 MB starter model** (whisper.cpp's base.en, from [Hugging Face's whisper.cpp repo](https://huggingface.co/ggerganov/whisper.cpp), checked against its SHA-256), so Glance works at once. It's a required step: **Continue** and **Skip setup** stay disabled until it finishes, which takes well under a minute on a typical connection.
+- **Then, in the background, the upgrade:** **Whisper large-v3 turbo** (about 650 MB, Core ML, from [Argmax's WhisperKit repo](https://huggingface.co/argmaxinc/whisperkit-coreml) into `~/Library/Application Support/Glance/models/whisperkit`), which runs on the Mac's Neural Engine through [WhisperKit](https://github.com/argmaxinc/WhisperKit). After the download, its first load prepares the model for this Mac's Neural Engine, once: a few minutes on recent Macs, about 20 minutes on an M1 (measured: 16 minutes). Later launches load it in seconds. Nothing waits for it: Listen uses the starter model meanwhile, and Glance switches to large-v3 turbo by itself once it's ready, even in the middle of a Listen. Progress shows in **Settings › General › Transcription**.
+- Total disk space for the models: about 0.8 GB on Macs that run WhisperKit (WhisperKit's model plus base.en), or about 1.3 GB if an earlier version also installed small.en.
+- On macOS 13 or older, or on a Mac where WhisperKit can't run, Glance stays on whisper.cpp and downloads small.en (about 490 MB, the **Accurate** model) in the background instead, switching to it when it's in.
+- Downloads resume after a dropped connection and offer **Try again** if they keep failing.
+- People updating from an earlier version keep using the whisper.cpp model they have, with no setup step, and get the same background upgrade.
 
 1. Download the latest **Glance-…-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
 2. Open it and drag **Glance** onto **Applications**.
 3. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
 4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
 
-Nothing else to install: the speech engine (whisper.cpp, with GPU acceleration through Metal) is inside the app. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
+Nothing else to install: both speech engines (WhisperKit, and whisper.cpp as the fallback) are inside the app. Version 1.0.0 also needed `brew install whisper-cpp`; 1.1.0 and later don't.
 
 ## Requirements
 
 - A Mac with Apple Silicon (the build targets `darwin-arm64`).
-- An internet connection on first launch, for the speech model download (about 490 MB).
-- To build from source: [Homebrew](https://brew.sh) and Node.js 20 or later. The downloaded app needs neither.
+- macOS 14 or later for the main speech engine (WhisperKit). On macOS 13 Glance uses whisper.cpp.
+- An internet connection on first launch, for the 148 MB starter model; the upgrade (about 650 MB, or 490 MB on macOS 13) then downloads in the background.
+- To build from source: Xcode (Swift 5.10 or later), [Homebrew](https://brew.sh) and Node.js 20 or later. The downloaded app needs none of them.
 - An API key for Anthropic or an OpenAI-compatible service, or a local model server (Ollama, LM Studio) that needs no key.
 
 ## Using Glance
 
 ### First launch
 
-On first launch Glance walks you through setup: the speech model download, an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. You can change everything later in Settings.
+On first launch Glance walks you through setup: the starter speech model download (148 MB), an API key (only if none is saved), what you'll use it for, your résumé and details, and, for interviews, the job description. For interviews the résumé is required, since answers are built from it; for meetings it's optional. You can change everything later in Settings.
 
 macOS asks for **Screen & System Audio Recording** permission the first time you listen or take a screenshot. Allow it, then reopen Glance once: macOS only sends audio to an app after it reopens. macOS remembers the permission, so this happens only once.
 
@@ -137,18 +140,21 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 - **Answers:** AI provider and key, model (listed from the provider, searchable, and any model ID can be typed), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
 - **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
 - **Session:** spending so far, the transcript, Save notes, Clear session.
-- **General:** Transcription (Accurate or Fast), Appearance (System, Light, Dark), words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
+- **General:** Transcription (the speech engine in use and the background upgrade's progress; Accurate or Fast only on Macs without WhisperKit), Appearance (System, Light, Dark), words to recognize (names and terms the transcriber should expect), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
 
 ### Transcription
 
-**Settings › General › Transcription** picks the speech model:
+**Settings › General › Transcription** shows the speech engine in use, and the background upgrade while it's on the way: "Upgrading to Whisper large-v3 turbo: downloading 41%", then "Upgrading to Whisper large-v3 turbo: preparing for this Mac (one time, can take up to 20 minutes)", then **Whisper large-v3 turbo (Neural Engine)** once it's in use. **Try again** appears if a download fails.
+
+- **Whisper large-v3 turbo (Neural Engine)** (macOS 14 and later): WhisperKit runs OpenAI's large-v3 turbo model in Core ML, on the Neural Engine rather than the GPU, so it works the same on every Apple Silicon Mac. It is much more accurate than base.en and small.en with technical terms, accents and noise. There is nothing to choose while it's in use. Its prompt is only your **Words to recognize** (none if that's empty): it already knows common tech terms, and every prompt word slows it down (on an M1, a 7.5 s piece takes about 1.3 s with no prompt and 2.5 s with a long one).
+- **whisper.cpp**: the starter (base.en) until WhisperKit's model is ready; on macOS 13 or older and Macs where WhisperKit can't run; and for the rest of a session if WhisperKit fails to load or its helper crashes 3 times. A single piece WhisperKit can't transcribe also goes to whisper.cpp, so nothing said is lost. If WhisperKit fails to load twice in a row on a Mac, Glance stops trying until the next version of Glance. With whisper.cpp, the row offers:
 
 | Setting | Model | Trade-off |
 | --- | --- | --- |
 | **Accurate** (default) | small.en, 488 MB | Much better with technical terms, accents, noise and quiet speakers; still faster than real time on Apple Silicon |
 | **Fast** | base.en, 148 MB | About twice as quick per piece, but makes more mistakes |
 
-Fast is downloaded the first time you pick it, and Accurate is used until it's ready. Use **Accurate** for interviews: a misheard question can't be answered well.
+On Macs without WhisperKit, Accurate's model downloads in the background after setup and Fast (the starter) is used until it's in. Use **Accurate** for interviews: a misheard question can't be answered well. whisper.cpp uses the GPU (Metal); if the GPU fails on a Mac, it steps down to the GPU without flash attention, then to the CPU, and remembers what worked.
 
 ### Depth
 
@@ -318,7 +324,7 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
 - **"Glance can't see your screen."** Turn Glance on in System Settings › Privacy & Security › Screen & System Audio Recording, then quit and reopen it.
 - **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt. Until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help:
   - Check Glance is on under **Screen & System Audio Recording** and under **System Audio Recording Only**.
-  - Building from source: make sure `brew install whisper-cpp` ran before `npm run package`.
+  - Building from source: make sure `brew install whisper-cpp` ran and Xcode is installed before `npm run package`.
 - **Answers are slow.** Everyday spoken questions always answer at Quick. If hard, typed or screenshot questions feel slow:
   - Set **Settings › Answers › Depth** to **Quick**, and press **Think harder** only when an answer looks shaky.
   - Use a faster model: Haiku 5.5 starts in about a second (see [Choosing a model](#choosing-a-model)).
@@ -327,12 +333,13 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
   - Auto-answer waits while you're typing, while an answer you asked for is still streaming, or while a form or Settings is open.
   - Press **Answer** (⌘↵) to answer the latest question yourself.
   - In the log, look for the interviewer's line followed by `turn check … result=none` (your model judged there was nothing to answer) or by no `question detected` or `turn check` at all.
-- **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Transcription for the Fast model). It resumes from where it stopped. Glance retries 3 times on its own before showing **Try again**.
-- **Names or jargon are misheard.** Add them under Settings › General › Words to recognize. Accurate transcription (the default) uses the larger model.
+- **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Transcription). It resumes from where it stopped. Glance retries 3 times on its own before showing **Try again**.
+- **Names or jargon are misheard.** Add them under Settings › General › Words to recognize; both engines get them as a prompt (whisper.cpp also gets a built-in list of common tech terms). With whisper.cpp, Accurate (the default) uses the larger model.
+- **Settings says whisper.cpp although the Mac runs macOS 14 or later.** The log says why: look for `whisperkit failed:` and `engine=`. WhisperKit's model may still be downloading or preparing (`whisperkit download`, `whisperkit load start`), or it failed to load and Glance fell back for the session.
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
 - **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
 - **Logs.** `~/Library/Logs/Glance/glance.log` records what happens in a session. It stays on your Mac and includes the first 80 characters of what was said.
-  - **What it records:** each heard line (speech length, `transcribeMs`, `waitMs`, `queued`, and whether it came via the server or the CLI), question detected / extended / replaced / dropped, auto-answer fired, turn check sent and its result (`result=none` or `result=answer`), each answer (`sinceSpeechEndMs`, model, `effort` used and your `depth` setting, `hard` and `deep` for hard questions and Think harder, first-token ms, total ms, `cacheRead` and `cacheWrite`), and `prewarm` when Listen warms the cache.
+  - **What it records:** the speech engine (`engine=whisperkit` or `engine=whisper.cpp`, `whisperkit download …`, `whisperkit ready loadMs=…`, `whisperkit failed: …`), each heard line (speech length, `transcribeMs`, `waitMs`, `queued`, and `via=whisperkit`, `server` or `cli`), question detected / extended / replaced / dropped, auto-answer fired, turn check sent and its result (`result=none` or `result=answer`), each answer (`sinceSpeechEndMs`, model, `effort` used and your `depth` setting, `hard` and `deep` for hard questions and Think harder, first-token ms, total ms, `cacheRead` and `cacheWrite`), and `prewarm` when Listen warms the cache.
   - **How to read it:**
     - Slow transcription: a long `transcribeMs` or a growing `queued` count means transcription is the bottleneck.
     - Slow first token: a long first token points to Depth or the model; `effort=medium` or `high` means that answer thought first.
@@ -381,7 +388,7 @@ rm -rf ~/Library/Application\ Support/Glance ~/Library/Logs/Glance   # includes 
 ## How it works
 
 ```
-Mac audio ──► speech detection ──► Whisper (whisper-server, kept loaded) ──► transcript
+Mac audio ──► speech detection ──► Whisper (WhisperKit on the Neural Engine; whisper.cpp as fallback) ──► transcript
                                                                                │
                                      question detection (joins split pieces) ◄─┘
                                                   │
@@ -391,7 +398,9 @@ Mac audio ──► speech detection ──► Whisper (whisper-server, kept loa
 ```
 
 - `src/main.js`: window, shortcuts, screenshots, keychain, settings, notes, logging, the test mode.
-- `src/audio.js`: system audio capture (audiotee), speech detection, Whisper transcription. `whisper-server` keeps the model loaded and restarts if it dies. The app runs its own bundled copy of whisper.cpp, falling back to Homebrew's (for `npm run dev`).
+- `src/whisperkit.js` and `native/glance-whisper/`: the main speech engine. `glance-whisper` is a small Swift program built on [WhisperKit](https://github.com/argmaxinc/WhisperKit) that downloads Whisper large-v3 turbo (`openai_whisper-large-v3-v20240930_turbo_632MB`), loads it with Core ML on the Neural Engine (encoder and decoder on `.cpuAndNeuralEngine`, the mel spectrogram on the CPU) and transcribes 16 kHz WAV pieces. Once the starter model is in, Glance downloads the model and loads it in the background (whisper.cpp transcribes meanwhile) and talks to the helper in JSON lines over stdin and stdout. A helper that crashes is restarted; after 3 crashes in a session, or a failed load, Glance uses whisper.cpp until it's reopened.
+- `src/audio.js`: system audio capture (audiotee), speech detection, and the whisper.cpp fallback. `whisper-server` keeps its model loaded (only while WhisperKit isn't doing the work) and restarts if it dies. The app runs its own bundled copy of whisper.cpp, falling back to Homebrew's (for `npm run dev`).
+- `scripts/build-whisperkit.sh`: builds `glance-whisper` (`swift build -c release --arch arm64`), copies it into `vendor/whisperkit` and signs it ad hoc.
 - `scripts/bundle-whisper.sh`: copies `whisper-server`, `whisper-cli`, their libraries and ggml's compute backends (Metal, CPU, BLAS) from Homebrew into `vendor/whisper`, rewrites their library paths to stay inside the app, and signs them. Licenses are included in `vendor/whisper/licenses`.
 - `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
 - `src/providers.js`: Anthropic and OpenAI-compatible adapters behind one interface. Adding a provider means adding one adapter.
@@ -402,15 +411,18 @@ Mac audio ──► speech detection ──► Whisper (whisper-server, kept loa
 ## Build from source
 
 ```sh
-# 1. The transcription engine; the build copies it into the app (vendor/whisper)
+# 1. The fallback transcription engine; the build copies it into the app (vendor/whisper)
 brew install whisper-cpp
+# The main engine (glance-whisper, WhisperKit) is built with Swift: install Xcode
+# and run `sudo xcode-select -s /Applications/Xcode.app` once. Its first build
+# fetches WhisperKit from GitHub.
 
 # 2. Optional speech models for npm run dev (not packed into the app)
 mkdir -p models
 curl -L -o models/ggml-base.en.bin  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 curl -L -o models/ggml-small.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.en.bin
 
-# 3. Dependencies, then build the app (bundles whisper.cpp, then packages and signs)
+# 3. Dependencies, then build the app (bundles whisper.cpp, builds glance-whisper, then packages and signs)
 npm install
 npm run package
 
@@ -421,7 +433,7 @@ npm start   # opens dist/Glance-darwin-arm64/Glance.app
 npm run dmg
 ```
 
-A `models/` folder in the checkout is optional: `npm run dev` uses it when present, and otherwise downloads the model into `~/Library/Application Support/Glance/models` like the app. `npm run package` and `npm run dmg` no longer pack `models/` (top-level dot files are excluded too). The DMG is LZMA-compressed and takes about 4 minutes to build.
+A `models/` folder in the checkout is optional: `npm run dev` uses it when present, and otherwise downloads the model into `~/Library/Application Support/Glance/models` like the app. `npm run dev` uses WhisperKit once `sh scripts/build-whisperkit.sh` has put `glance-whisper` in `vendor/whisperkit`. `npm run package` and `npm run dmg` no longer pack `models/` (top-level dot files are excluded too). The DMG is LZMA-compressed and takes about 4 minutes to build.
 
 `npm run dev` runs from source, but macOS won't grant it screen recording, so screenshots only work in the packaged app. Quit Glance before running `npm run package` again.
 
@@ -434,6 +446,7 @@ node scripts/screenshots.mjs   # regenerate docs/images/
 ANTHROPIC_API_KEY=… node test/interview-eval.js claude-sonnet-5-5   # real-API interview check
 ```
 
+- **WhisperKit tests** (`test/whisperkit.test.js`, `test/ui-whisperkit.test.js`) use a fake helper (`test/fixtures/fake-whisperkit.mjs`) that speaks glance-whisper's protocol: transcription through it, falling back to whisper.cpp, crashes, failed loads, and the app choosing its engine. Test mode never downloads a real model or runs the real helper; `GLANCE_WHISPERKIT_BIN` points it at a fake.
 - **UI tests** (`test/ui.test.js`) launch the real app in test mode and drive it over the DevTools protocol: setup, every Settings tab and form, the provider form (model dropdowns, server addresses, Test connection), the mode menu, answers, key points, "I said something else", Think harder, stopping, waiting for a question to finish, and auto-answer. Test mode (`GLANCE_TEST_DIR=<folder>`) uses its own settings folder, never touches the keychain, registers no global shortcuts and keeps its window invisible. A fake OpenAI-compatible server answers.
 - **The interview eval** (`test/interview-eval.js`) asks 21 sample interview questions against a real model and checks shape, placeholders, labels, length, key phrases and consistency. `EVAL_ONLY="salary|visa"` runs a subset; `EVAL_PROVIDER=openai EVAL_BASE_URL=…` targets another vendor. Read the answers too: checks can't judge quality.
 - **Roadmap:** see [PLAN.md](PLAN.md).

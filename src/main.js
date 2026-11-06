@@ -5,6 +5,7 @@ import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Listener } from "./audio.js";
+import { kitDownloaded, kitSupported, WhisperKit, WHISPERKIT_NAME, WHISPERKIT_SIZE } from "./whisperkit.js";
 import { normalizeBaseUrl } from "./urls.js";
 import { caveman, keepsFacts } from "./compress.js";
 import { DEFAULT_BASE_URL, downloadModel, findModel, MODELS } from "./models.js";
@@ -65,6 +66,15 @@ const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openai
   compactAnswers: false,
   // Interview mode, while listening: answer a heard question once they finish.
   autoAnswer: true,
+  // How whisper.cpp runs here: "gpu", "gpu-nofa" or "cpu" (stepped down after a GPU failure).
+  whisperMode: "gpu",
+  // WhisperKit (see whisperkit.js): failed loads in a row on this Mac; at 2 it's
+  // off (whisperkitBroken) until the app version changes (whisperkitBrokenVersion).
+  whisperkitLoadFailures: 0,
+  whisperkitBroken: false,
+  whisperkitBrokenVersion: "",
+  // Loaded here before: the model is installed, and a later load only warms it.
+  whisperkitLoaded: false,
   // Last model list fetched per provider and base URL, so the dropdown can
   // show something before the network answers.
   modelLists: {},
@@ -106,9 +116,17 @@ let spend = { input: 0, output: 0, dollars: 0 }; // this session, all calls
 let lastAskOrPrewarmAt = 0; // last question or cache warm, for the 50-minute refresh
 let prewarming = false;
 
-// The speech model download, reported to the window. Only one download runs at
-// a time; a model asked for meanwhile waits its turn.
-let speech = { status: "downloading", model: "small.en", received: 0, total: MODELS["small.en"].size, error: null };
+// Speech, in two parts, so nobody waits:
+// 1. The starter: whisper.cpp with base.en (148 MB). Setup's speech step
+//    downloads it on every Mac; Listen works as soon as it's in.
+// 2. The upgrade, in the background with progress in Settings: WhisperKit
+//    (Whisper large-v3 turbo on the Neural Engine) where this Mac can run it,
+//    which takes over once loaded (even mid-Listen); otherwise whisper.cpp's
+//    small.en (Accurate), used once it's downloaded.
+// `speech` is the whisper.cpp model in use (what setup and Listen wait for).
+// Only one of its downloads runs at a time; a model asked for meanwhile waits
+// its turn.
+let speech = { status: "downloading", model: "base.en", received: 0, total: MODELS["base.en"].size, error: null };
 let speechTask = null;
 let pendingSpeechModel = null;
 let speechBroadcastAt = 0;
@@ -117,9 +135,25 @@ const RETRY_DELAYS = [2000, 5000, 15000];
 
 const userModelsDir = () => path.join(app.getPath("userData"), "models");
 const bundledModelsDir = () => unpacked(path.join(here, "..", "models"));
-const modelDirs = () => [userModelsDir(), bundledModelsDir()];
+// Test mode only sees its own folder, not a model in the checkout.
+const modelDirs = () => (TEST_DIR ? [userModelsDir()] : [userModelsDir(), bundledModelsDir()]);
 const installedModel = (name) => findModel(name, { dirs: modelDirs() });
 const modelsBaseUrl = () => process.env.GLANCE_MODELS_URL || DEFAULT_BASE_URL;
+
+// WhisperKit, the upgrade where this Mac can run it. The helper is bundled by
+// scripts/build-whisperkit.sh. Test mode (GLANCE_TEST_DIR) never runs the
+// real one: only a fake given in GLANCE_WHISPERKIT_BIN.
+const kitBinary = () => process.env.GLANCE_WHISPERKIT_BIN || (TEST_DIR ? null : unpacked(path.join(here, "..", "vendor", "whisperkit", "glance-whisper")));
+const kitModelsDir = () => path.join(userModelsDir(), "whisperkit");
+let kit = null; // the helper, when this Mac can use it
+// For Settings: off (not started yet), downloading, preparing (first load on
+// this Mac, the Neural Engine compile), loading (a later load), ready, error.
+let kitStatus = { status: "off", received: 0, total: WHISPERKIT_SIZE, error: null };
+let kitTask = null;
+// The small.en upgrade where WhisperKit can't run: { status, received, total, error }.
+let smallUp = null;
+let smallTask = null;
+const engine = () => (kit?.state === "ready" ? "whisperkit" : "whisper.cpp");
 
 // Progress arrives with every chunk; the window only needs a few updates a
 // second. Final changes (ready, error) go out at once.
@@ -142,10 +176,15 @@ function broadcastSpeech(now = false) {
   }, wait);
 }
 
+// models.js's own errors are plain sentences; a network error ("fetch
+// failed") isn't.
+const downloadError = (e) => (/speech model|disk space/i.test(e?.message || "") ? e.message : "The speech model download failed. Check your connection.");
+
 function setSpeechReady(name) {
   speech = { status: "ready", model: name, received: MODELS[name].size, total: MODELS[name].size, error: null };
   listener?.setTranscription(transcriptionOptions());
   broadcastSpeech(true);
+  upgradeSpeech();
 }
 
 async function downloadWithRetries(name, retry) {
@@ -163,17 +202,21 @@ async function downloadWithRetries(name, retry) {
           broadcastSpeech();
         },
       });
-      speech = { status: "ready", model: name, received: total, total, error: null };
       log(`speech model download finish: ${name} in ${Date.now() - started}ms`);
-      listener?.setTranscription(transcriptionOptions());
-      broadcastSpeech(true);
+      setSpeechReady(name);
       return file;
     } catch (e) {
-      speech = { ...speech, status: "error", error: e.message };
+      speech = { ...speech, status: "error", error: downloadError(e) };
       log(`speech model download error: ${name}:`, e);
       broadcastSpeech(true);
       if (!retry || attempt >= RETRY_DELAYS.length) return null;
       await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+      // In place meanwhile (another copy of Glance, or put there by hand).
+      const installed = installedModel(name);
+      if (installed) {
+        setSpeechReady(name);
+        return installed;
+      }
       speech = { ...speech, status: "downloading", error: null };
       broadcastSpeech(true);
     }
@@ -203,6 +246,174 @@ function startModelDownload(name, { retry = true } = {}) {
   return task;
 }
 
+// WhisperKit can still take over on this Mac (this session).
+const kitUsable = () => !!kit && kit.state !== "failed";
+
+// The background upgrade, once the starter model is in. Safe to call again.
+function upgradeSpeech() {
+  if (speech.status !== "ready") return;
+  if (kitUsable()) startKit();
+  else if (config.transcription !== "fast" && !installedModel("small.en")) startSmallUpgrade();
+}
+
+// small.en in the background (Macs without WhisperKit). whisper.cpp keeps
+// using base.en until it's in, then switches from the next segment.
+function startSmallUpgrade({ retry = true } = {}) {
+  if (smallTask) return smallTask;
+  if (installedModel("small.en")) {
+    smallUp = null;
+    if (speech.model !== "small.en" && config.transcription !== "fast") setSpeechReady("small.en");
+    return Promise.resolve(true);
+  }
+  const total = MODELS["small.en"].size;
+  const set = (next, now = true) => {
+    smallUp = { ...smallUp, ...next };
+    broadcastSpeech(now);
+  };
+  const task = (async () => {
+    const started = Date.now();
+    log(`speech model download start: small.en (background, ${Math.round(total / 1_000_000)} MB)`);
+    set({ status: "downloading", received: 0, total, error: null });
+    for (let attempt = 0; ; attempt++) {
+      try {
+        await downloadModel("small.en", { dir: userModelsDir(), baseUrl: modelsBaseUrl(), onProgress: ({ received, total: size }) => set({ received, total: size }, false) });
+        log(`speech model download finish: small.en (background) in ${Date.now() - started}ms`);
+        smallUp = null;
+        if (config.transcription !== "fast") {
+          log("engine=whisper.cpp model=small.en");
+          setSpeechReady("small.en");
+        } else broadcastSpeech(true);
+        return true;
+      } catch (e) {
+        log("speech model download error: small.en (background):", e);
+        set({ status: "error", error: downloadError(e) });
+        if (!retry || attempt >= RETRY_DELAYS.length) return false;
+        await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+        set({ status: "downloading", error: null });
+      }
+    }
+  })().finally(() => {
+    if (smallTask === task) smallTask = null;
+  });
+  smallTask = task;
+  return task;
+}
+
+function setKitStatus(next) {
+  kitStatus = { ...kitStatus, ...next };
+  broadcastSpeech(["ready", "error", "preparing", "loading"].includes(next.status));
+}
+
+// The helper's messages are technical; the window gets a plain sentence.
+function kitDownloadError(message) {
+  if (/space|ENOSPC|disk/i.test(message)) return `Not enough disk space for the speech model (${Math.round(WHISPERKIT_SIZE / 1_000_000)} MB needed).`;
+  return "The speech model download failed. Check your connection.";
+}
+
+function createKit() {
+  const k = new WhisperKit({ binary: kitBinary(), modelsDir: kitModelsDir() });
+  k.on("log", (line) => log(`whisperkit: ${String(line).slice(0, 500)}`));
+  k.on("crash", (reason) => log(`whisperkit crash: ${reason}`));
+  k.on("ready", (loadMs) => {
+    log(`whisperkit ready loadMs=${loadMs}`);
+    log("engine=whisperkit");
+    if (config.whisperkitLoadFailures || !config.whisperkitLoaded) {
+      config.whisperkitLoadFailures = 0;
+      config.whisperkitLoaded = true;
+      saveConfig();
+    }
+    setKitStatus({ status: "ready", error: null });
+  });
+  // Off for this session (load failed, or crashed 3 times): whisper.cpp from
+  // here on, with small.en as its upgrade. Nothing technical reaches the window.
+  k.on("failed", (reason, { loadFailed } = {}) => {
+    log(`whisperkit failed: ${reason}`);
+    log("engine=whisper.cpp");
+    if (loadFailed) {
+      config.whisperkitLoadFailures = (config.whisperkitLoadFailures || 0) + 1;
+      // Twice in a row on this Mac: off until the next version of Glance.
+      if (config.whisperkitLoadFailures >= 2) {
+        config.whisperkitBroken = true;
+        config.whisperkitBrokenVersion = app.getVersion();
+        log(`whisperkit off until the next version (${config.whisperkitLoadFailures} failed loads in a row)`);
+      }
+      saveConfig();
+    }
+    kitStatus = { ...kitStatus, status: "off", error: null };
+    broadcastSpeech(true);
+    upgradeSpeech();
+  });
+  return k;
+}
+
+async function downloadKitWithRetries(retry) {
+  const started = Date.now();
+  log(`whisperkit download start (${Math.round(WHISPERKIT_SIZE / 1_000_000)} MB)`);
+  setKitStatus({ status: "downloading", error: null });
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await kit.download(({ received, total }) => setKitStatus({ received, total }));
+      log(`whisperkit download finish in ${Date.now() - started}ms`);
+      return true;
+    } catch (e) {
+      log(`whisperkit download error: ${e.message}`);
+      if (kit.state === "failed") return false;
+      setKitStatus({ status: "error", error: kitDownloadError(e.message) });
+      if (!retry || attempt >= RETRY_DELAYS.length) return false;
+      await new Promise((r) => setTimeout(r, RETRY_DELAYS[attempt]));
+      setKitStatus({ status: "downloading", error: null });
+    }
+  }
+}
+
+// Downloads WhisperKit's model if needed, then loads it. whisper.cpp does
+// all the transcribing meanwhile; Listener switches once it's ready.
+function startKit({ retry = true } = {}) {
+  if (!kitUsable()) return Promise.resolve(false);
+  if (kitTask) return kitTask;
+  if (kit.state === "ready") return Promise.resolve(true);
+  const task = (async () => {
+    if (!kitDownloaded(kitModelsDir())) {
+      if (!(await downloadKitWithRetries(retry))) return false;
+    }
+    if (kit.state === "ready") return true;
+    // The first load on this Mac compiles the model for its Neural Engine
+    // (about 16 minutes on an M1); later loads take seconds.
+    const first = !config.whisperkitLoaded;
+    setKitStatus({ status: first ? "preparing" : "loading", received: kitStatus.total, error: null });
+    log(`whisperkit load start${first ? " (first on this Mac)" : ""}`);
+    try {
+      await kit.load();
+      return true;
+    } catch {
+      return false; // "failed" handles it
+    }
+  })().finally(() => {
+    if (kitTask === task) kitTask = null;
+  });
+  kitTask = task;
+  return task;
+}
+
+// At launch: the starter model (setup's step if it's missing), then the upgrade.
+function setUpSpeech() {
+  // Off after failed loads, until a new version of Glance tries again.
+  if (config.whisperkitBroken && config.whisperkitBrokenVersion !== app.getVersion()) {
+    Object.assign(config, { whisperkitBroken: false, whisperkitBrokenVersion: "", whisperkitLoadFailures: 0 });
+    saveConfig();
+  }
+  const usable = kitSupported({ binary: kitBinary() }) && !config.whisperkitBroken;
+  log(`whisperkit usable=${usable}${config.whisperkitBroken ? " (off after failed loads)" : ""}`);
+  if (usable) kit = createKit(); // started by upgradeSpeech, once the starter is in
+  // A copy in the checkout (npm run dev) or an older build still counts as
+  // installed. Fast with only small.en here also fetches base.en.
+  const small = installedModel("small.en");
+  const base = installedModel("base.en");
+  if (small || base) setSpeechReady(small && (config.transcription !== "fast" || !base) ? "small.en" : "base.en");
+  else startModelDownload("base.en");
+  if (!usable && config.transcription === "fast" && !base) startModelDownload("base.en");
+  log(`engine=${engine()} model=${speech.model}`);
+}
 
 // usage is a provider's normalized { input, output, cacheRead, cacheWrite }.
 // Cost is null when the provider has no price list (OpenAI-compatible).
@@ -371,6 +582,12 @@ function send(channel, payload) {
   win.webContents.send(channel, payload);
 }
 
+function speechUpgrade() {
+  if (kitUsable() && kitStatus.status !== "off") return { to: "whisperkit", ...kitStatus, status: kit.state === "ready" ? "ready" : kitStatus.status };
+  if (smallUp) return { to: "small.en", ...smallUp };
+  return null;
+}
+
 function state() {
   return {
     listening,
@@ -404,6 +621,9 @@ function state() {
     jdCheckedAt: config.jdCheckedAt,
     transcription: config.transcription,
     speech: { ...speech },
+    // The engine Listen uses now, and the background upgrade for Settings:
+    // WhisperKit where this Mac can run it, else small.en; null when there's none.
+    speechEngine: { active: engine(), name: WHISPERKIT_NAME, model: speech.model, upgrade: speechUpgrade() },
     vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
     compactAnswers: config.compactAnswers,
@@ -932,7 +1152,9 @@ async function toggleListening() {
     listening = false;
     listeningSince = null;
   } else {
-    if (!transcriptionOptions().modelPath) {
+    // whisper.cpp's model (the starter) is all Listen needs; WhisperKit takes
+    // over by itself once it's loaded.
+    if (kit?.state !== "ready" && !transcriptionOptions().modelPath) {
       if (speech.status === "error") {
         send("notice", { level: "error", text: `${speech.error} Use Try again to download the speech model.` });
       } else {
@@ -942,6 +1164,7 @@ async function toggleListening() {
       return;
     }
     if (!listener.start()) return;
+    log(`listen start engine=${engine()}`);
     listening = true;
     listeningSince = Date.now();
     prewarmAnswers();
@@ -962,6 +1185,10 @@ function transcriptionOptions() {
   return {
     modelPath: modelPath || null,
     prompt: `Terms: ${TECH_TERMS}.${words ? ` Names and terms: ${words}.` : ""}`,
+    // WhisperKit's large-v3 turbo already knows common tech terms, and every
+    // prompt token slows it down (about 2x with the list above): only the
+    // user's own words, or nothing.
+    kitPrompt: words,
   };
 }
 
@@ -971,7 +1198,17 @@ function createListener() {
     audioteePath: unpacked(path.join(here, "..", "node_modules", "audiotee", "bin", "audiotee")),
     // Bundled by scripts/bundle-whisper.sh; Homebrew's is used when absent (npm run dev).
     whisperDir: unpacked(path.join(here, "..", "vendor", "whisper")),
+    // The transcription mode that worked on this Mac (see WHISPER_MODES).
+    mode: config.whisperMode,
+    whisperkit: kit,
   });
+  // The GPU failed on this Mac: remember the mode that's used from now on.
+  l.on("mode", (mode, reason) => {
+    log(`transcription mode=${mode} (${String(reason).replace(/\s+/g, " ").slice(0, 600)})`);
+    config.whisperMode = mode;
+    saveConfig();
+  });
+  l.on("detail", (text) => log(String(text).replace(/\s+/g, " ").slice(0, 2000)));
   const keep = (line) => {
     // Kept whole for notes, in spoken order; only the tail goes to the model.
     let i = transcript.length;
@@ -985,7 +1222,10 @@ function createListener() {
     if (isPromptHallucination(line.text, [...TECH_TERMS.split(", "), ...config.vocabulary.split(",")])) return;
     keep(line);
   });
-  l.on("error", (text) => send("notice", { level: "error", text }));
+  l.on("error", (text) => {
+    log(`listen error: ${text}`);
+    send("notice", { level: "error", text });
+  });
   // Nothing but silence since Listen: most often system audio access is off,
   // or Glance wasn't reopened after it was turned on.
   l.on("silent", () =>
@@ -1135,8 +1375,9 @@ ipcMain.handle("set-said", (_e, id, text) => {
 ipcMain.handle("toggle-listening", () => toggleListening());
 // Setup's Try again, or retrying after the automatic attempts gave up.
 ipcMain.handle("download-model", () => {
-  if (speechTask || speech.status === "ready") return;
-  startModelDownload(speech.model || "small.en", { retry: true });
+  if (speech.status === "error" && !speechTask) return startModelDownload(speech.model || "base.en", { retry: true });
+  if (kitUsable() && kitStatus.status === "error" && !kitTask) return startKit({ retry: true });
+  if (smallUp?.status === "error" && !smallTask) return startSmallUpgrade({ retry: true });
 });
 // The provider form can list and test before anything is saved: an empty
 // key or base URL falls back to what's stored.
@@ -1238,6 +1479,8 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   else if (name === "transcription" && ["fast", "accurate"].includes(value)) {
     config.transcription = value;
     if (value === "fast" && !installedModel("base.en")) startModelDownload("base.en");
+    // Accurate where WhisperKit can't run: small.en, in the background.
+    if (value === "accurate" && !kitUsable() && speech.status === "ready") startSmallUpgrade();
     listener?.setTranscription(transcriptionOptions());
   } else if (name === "vocabulary") {
     config.vocabulary = String(value ?? "").slice(0, 500);
@@ -1315,6 +1558,7 @@ ipcMain.handle("delete-all-data", async (_e, options) => {
   wiping = true;
   current?.abort();
   listener?.stop();
+  kit?.stop();
   for (const account of Object.values(KEYCHAIN.accounts)) {
     try {
       writeKeychainKey(null, account);
@@ -1332,12 +1576,7 @@ app.on("second-instance", () => win?.show());
 app.whenReady().then(() => {
   log("start", app.getVersion(), "screen status:", systemPreferences.getMediaAccessStatus("screen"));
   loadConfig();
-  // The speech model is downloaded on first launch instead of shipping inside
-  // the app. A copy in the checkout (npm run dev) or an older build still
-  // counts as installed.
-  if (installedModel("small.en")) setSpeechReady("small.en");
-  else startModelDownload("small.en");
-  if (config.transcription === "fast" && !installedModel("base.en")) startModelDownload("base.en");
+  setUpSpeech();
   createWindow();
   createTray();
   // Before the first Listen: see Listener.prepare.
@@ -1368,5 +1607,6 @@ app.whenReady().then(() => {
 app.on("will-quit", () => {
   globalShortcut.unregisterAll();
   listener?.stop();
+  kit?.stop();
 });
 app.on("window-all-closed", () => app.quit());

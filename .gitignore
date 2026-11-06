@@ -4,3 +4,4 @@ models/
 .DS_Store
 vendor/
 .plan/
+native/glance-whisper/.build/

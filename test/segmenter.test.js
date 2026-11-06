@@ -172,3 +172,75 @@ test("listener doesn't warn once real sound has arrived", async () => {
   l.stop();
   assert.equal(silent, 0);
 });
+
+// A stand-in whisper-cli that fails like that Mac's Metal backend unless it's
+// told to use the CPU (-ng); with failNoGpu, it fails without the GPU too.
+async function gpuBrokenCli({ failNoFa = true, failCpu = false } = {}) {
+  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const dir = mkdtempSync(new URL("file://" + tmpdir() + "/glance-cli-").pathname);
+  const bin = `${dir}/whisper-cli`;
+  const fail = `echo "src/ggml-backend.cpp:1089: pre-allocated tensor (leaf_0) in a buffer (MTL0) that cannot run the operation (NONE)" >&2; exit 134`;
+  writeFileSync(bin, `#!/bin/sh
+case " $* " in
+  *" -ng "*) ${failCpu ? fail : 'echo "hello on the cpu"'} ;;
+  *" -nfa "*) ${failNoFa ? fail : 'echo "hello without flash attention"'} ;;
+  *) ${fail} ;;
+esac
+`);
+  chmodSync(bin, 0o755);
+  return bin;
+}
+
+test("a GPU failure steps down to the next mode and retries the same piece", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: await gpuBrokenCli() });
+  l.server.transcribe = async () => null;
+  const modes = [];
+  l.on("mode", (m) => modes.push(m));
+  const errors = [];
+  l.on("error", (e) => errors.push(e));
+  const got = new Promise((r) => l.once("line", r));
+  l.enqueue(pcm(1, 8000));
+  const line = await got;
+  assert.equal(line.text, "hello on the cpu");
+  assert.deepEqual(modes, ["gpu-nofa", "cpu"]);
+  assert.equal(l.mode, "cpu");
+  assert.deepEqual(errors, []);
+});
+
+test("without flash attention is enough when that works; a remembered mode is used from the start", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const bin = await gpuBrokenCli({ failNoFa: false });
+  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: bin });
+  l.server.transcribe = async () => null;
+  const got = new Promise((r) => l.once("line", r));
+  l.enqueue(pcm(1, 8000));
+  assert.equal((await got).text, "hello without flash attention");
+  assert.equal(l.mode, "gpu-nofa");
+  const again = new Listener({ modelPath: "/nonexistent", whisperBinary: bin, mode: "gpu-nofa" });
+  again.server.transcribe = async () => null;
+  const modes = [];
+  again.on("mode", (m) => modes.push(m));
+  const next = new Promise((r) => again.once("line", r));
+  again.enqueue(pcm(1, 8000));
+  assert.equal((await next).text, "hello without flash attention");
+  assert.deepEqual(modes, []);
+});
+
+test("when every mode fails, the window gets one plain sentence and the log gets the details", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: await gpuBrokenCli({ failCpu: true }) });
+  l.server.transcribe = async () => null;
+  const errors = [];
+  const details = [];
+  l.on("error", (e) => errors.push(e));
+  l.on("detail", (d) => details.push(d));
+  l.enqueue(pcm(1, 8000));
+  l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.equal(errors.length, 1);
+  assert.doesNotMatch(errors[0], /ggml|MTL|tensor|\/Applications/);
+  assert.match(errors[0], /can't transcribe on this Mac/);
+  assert.match(details[0], /MTL0/);
+});

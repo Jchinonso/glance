@@ -212,6 +212,61 @@ test("setup: a missing speech model gets a compulsory step with progress and Try
   await run(`requestSpeechDownload = () => g.downloadModel(); onboarding = null; state.onboarded = true; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
 });
 
+test("setup: the speech step downloads the 150 MB starter model, with no preparing phase", { skip }, async () => {
+  await run(`state.onboarded = false; state.speech = { status: "downloading", model: "base.en", received: 37000000, total: ${MODELS["base.en"].size}, error: null };
+    onboarding = { step: "speech", needsKey: false, needsModel: true, use: "meetings", hide: false }; render();`);
+  assert.match(await run(`return document.getElementById("obSpeechLead").textContent;`), /about 150 MB\./);
+  assert.equal(await run(`return document.getElementById("obSpeechMeta").textContent;`), "37 of 148 MB");
+  assert.ok(await shown("obSpeechProgress"));
+  assert.equal(await run(`return document.getElementById("obSpeechPreparing");`), null, "no preparing phase in setup");
+  assert.ok(await run(`return document.getElementById("obNext").disabled;`));
+  // Ready moves on by itself; WhisperKit, if any, comes later in the background.
+  await run(`state.speech = { ...state.speech, status: "ready", received: state.speech.total }; render();`);
+  assert.equal(await run(`return onboarding.step;`), "about");
+  await run(`onboarding = null; state.onboarded = true; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+});
+
+test("settings: Transcription shows the background upgrade, then names WhisperKit once it's in use", { skip }, async () => {
+  const saved = await run(`return JSON.stringify(state.speechEngine ?? null);`);
+  const text = () => run(`return document.getElementById("upgradeText").textContent;`);
+  // This test run has no WhisperKit helper and small.en is installed: no upgrade, Fast/Accurate.
+  assert.equal(await run(`return state.speechEngine.active;`), "whisper.cpp");
+  assert.equal(await run(`return state.speechEngine.upgrade;`), null);
+  await run(`render();`);
+  assert.equal(await run(`return document.getElementById("transcription").hidden;`), false);
+  assert.equal(await shown("upgradeStatus"), false);
+  // WhisperKit downloading in the background: whisper.cpp (base.en) for now, no Fast/Accurate.
+  const kit = (status, extra = "") => `state.speechEngine = { active: "whisper.cpp", name: "Whisper large-v3 turbo", model: "base.en", upgrade: { to: "whisperkit", status: "${status}", received: 265885000, total: 648500000, error: null ${extra} } }; render();`;
+  await run(kit("downloading"));
+  assert.ok(await shown("upgradeStatus"));
+  assert.equal(await text(), "Upgrading to Whisper large-v3 turbo: downloading 41%");
+  assert.equal(await run(`return document.getElementById("transcription").hidden;`), true);
+  assert.match(await run(`return document.getElementById("transcriptionHint").textContent;`), /whisper\.cpp \(base\.en\)/);
+  assert.equal(await shown("upgradeRetry"), false);
+  await run(kit("preparing"));
+  assert.equal(await text(), "Upgrading to Whisper large-v3 turbo: preparing for this Mac (one time, can take up to 20 minutes)");
+  await run(kit("loading"));
+  assert.equal(await text(), "Loading Whisper large-v3 turbo…");
+  await run(kit("error", `, error: "The speech model download failed. Check your connection."`));
+  assert.equal(await text(), "The speech model download failed. Check your connection.");
+  assert.ok(await shown("upgradeRetry"));
+  await run(`window.__retried = false; requestSpeechDownload = () => { window.__retried = true; };`);
+  await click("#upgradeRetry");
+  assert.equal(await run(`return window.__retried;`), true);
+  await run(`requestSpeechDownload = () => g.downloadModel();`);
+  // In use: named, nothing pending.
+  await run(`state.speechEngine = { active: "whisperkit", name: "Whisper large-v3 turbo", model: "base.en", upgrade: { to: "whisperkit", status: "ready", received: 648500000, total: 648500000, error: null } }; render();`);
+  assert.equal(await run(`return document.getElementById("transcription").hidden;`), true);
+  assert.equal(await run(`return document.getElementById("transcriptionHint").textContent;`), "Whisper large-v3 turbo (Neural Engine)");
+  assert.equal(await shown("upgradeStatus"), false);
+  // A Mac without WhisperKit: small.en in the background, Fast/Accurate stays.
+  await run(`state.speechEngine = { active: "whisper.cpp", name: "Whisper large-v3 turbo", model: "base.en", upgrade: { to: "small.en", status: "downloading", received: 243807100, total: 487614201, error: null } }; render();`);
+  assert.equal(await text(), "Upgrading to the Accurate model: downloading 50%");
+  assert.equal(await run(`return document.getElementById("transcription").hidden;`), false);
+  assert.equal(await run(`return document.getElementById("transcriptionHint").textContent;`), "Accurate is slower but better with accents and noise");
+  await run(`state.speechEngine = ${saved}; render();`);
+});
+
 test("setup: an installed speech model means no speech step", { skip }, async () => {
   assert.equal(await run(`return onboardingSteps({ needsKey: false, needsModel: false, use: "interviews" }).includes("speech");`), false);
   await run(`state.onboarded = false; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; startOnboarding(); render();`);

@@ -210,7 +210,33 @@ function renderMenu() {
   for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   for (const b of $("theme").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.theme));
   const speech = state.speech || {};
-  const fastModel = state.transcription === "fast" && speech.model === "base.en" && speech.status !== "ready";
+  // The engine in use, and the background upgrade (WhisperKit where this Mac
+  // can run it, else small.en) while whisper.cpp does the work.
+  const eng = state.speechEngine || {};
+  const kitName = eng.name || "Whisper large-v3 turbo";
+  const kitActive = eng.active === "whisperkit";
+  const up = eng.upgrade;
+  const kitPath = kitActive || up?.to === "whisperkit";
+  // Fast/Accurate only chooses whisper.cpp's model: not shown on the WhisperKit path.
+  $("transcription").hidden = kitPath;
+  $("transcriptionHint").textContent =
+    kitActive ? `${kitName} (Neural Engine)`
+    : kitPath ? `Using whisper.cpp (${eng.model || "base.en"}) until the upgrade is ready`
+    : "Accurate is slower but better with accents and noise";
+  const upShown = !kitActive && !!up && up.status !== "ready";
+  $("upgradeStatus").hidden = !upShown;
+  $("upgradeStatus").classList.toggle("caution", upShown && up.status === "error");
+  $("upgradeRetry").hidden = !upShown || up.status !== "error";
+  if (upShown) {
+    const pct = Math.round((100 * (up.received || 0)) / (up.total || 1));
+    $("upgradeText").textContent =
+      up.status === "error" ? up.error || "The speech model download failed."
+      : up.to === "small.en" ? `Upgrading to the Accurate model: downloading ${pct}%`
+      : up.status === "preparing" ? `Upgrading to ${kitName}: preparing for this Mac (one time, can take up to 20 minutes)`
+      : up.status === "loading" ? `Loading ${kitName}…`
+      : `Upgrading to ${kitName}: downloading ${pct}%`;
+  }
+  const fastModel = !kitPath && state.transcription === "fast" && speech.model === "base.en" && speech.status !== "ready";
   $("fastModelStatus").hidden = !fastModel;
   $("fastModelStatus").classList.toggle("caution", fastModel && speech.status === "error");
   if (fastModel) {
@@ -1666,9 +1692,11 @@ function renderOnboarding() {
   if (step === "speech") {
     const speech = state.speech || {};
     if (speech.status !== "ready") onboarding.sawSpeechDownloading = true;
-    const total = speech.total || 488_000_000;
+    const total = speech.total || 148_000_000;
     const received = Math.min(speech.received || 0, total);
     const mb = (n) => Math.round(n / 1_000_000).toLocaleString();
+    // Rounded to tens: "about 150 MB" for the starter model (base.en).
+    $("obSpeechLead").textContent = `Glance needs this to transcribe calls. This one-time download is about ${Math.round(total / 10_000_000) * 10} MB.`;
     $("obSpeechFill").style.width = `${total ? (100 * received) / total : 0}%`;
     $("obSpeechMeta").textContent = `${mb(received)} of ${mb(total)} MB`;
     $("obSpeechProgress").hidden = speech.status === "error";
@@ -1766,6 +1794,7 @@ function requestSpeechDownload() {
 }
 $("obSpeechRetry").addEventListener("click", () => requestSpeechDownload());
 $("fastModelRetry").addEventListener("click", () => requestSpeechDownload());
+$("upgradeRetry").addEventListener("click", () => requestSpeechDownload());
 $("obUse").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (!v) return;
