@@ -397,11 +397,42 @@ test("mode menu switches Interview and Meeting", { skip }, async () => {
   await run(`if (!document.getElementById("jdCard").hidden) document.getElementById("jdSame").click();`);
 });
 
+test("mode menu: the window grows to show the whole open menu, then returns", { skip }, async () => {
+  // Squash the window to just the header and bottom bar, as when nothing is on.
+  await run(`document.querySelector("main").style.display = "none"; for (const id of ["notice", "shots", "pager"]) { const e = document.getElementById(id); if (e) e.hidden = true; }`);
+  await sleep(300);
+  const before = await run(`return window.innerHeight;`);
+  await click("#modeBtn");
+  await until(`document.getElementById("modeMenu").getBoundingClientRect().top >= 0 && window.innerHeight > ${before}`);
+  assert.ok(await run(`return document.getElementById("modeMenu").getBoundingClientRect().top >= 0;`));
+  await run(`document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));`);
+  await until(`document.getElementById("modeMenu").hidden && window.innerHeight === ${before}`);
+  await click("#modeBtn");
+  await until(`window.innerHeight > ${before}`);
+  await run(`document.body.click();`);
+  await until(`window.innerHeight === ${before}`);
+  await run(`document.querySelector("main").style.display = "";`);
+});
+
 test("a typed question streams an answer", { skip }, async () => {
   await run(`document.getElementById("question").value = "Tell me about a reliability win"; document.getElementById("askBtn").click();`);
   await until(`answers.length === 1 && answers[0].status === "done"`);
   assert.match(await run(`return document.getElementById("answerBody").textContent;`), /billing migration/);
   assert.match(requests.at(-1).messages[1].content.at(-1).text, /Tell me about a reliability win/);
+});
+
+test("an answer that starts while Settings or a form is open closes it and shows the answer", { skip }, async () => {
+  const count = await run(`return answers.length;`);
+  await run(`setMenu(true);`);
+  await until(`panel === "settings"`);
+  await run(`document.getElementById("question").value = "From settings?"; document.getElementById("askBtn").click();`);
+  await until(`answers.length === ${count + 1} && panel === null && view === "answers"`);
+  await until(`answers.at(-1).status === "done"`);
+  await run(`openPanel("shortcuts");`);
+  await until(`panel === "shortcuts"`);
+  await run(`document.getElementById("question").value = "From a form?"; document.getElementById("askBtn").click();`);
+  await until(`answers.length === ${count + 2} && panel === null && view === "answers"`);
+  await until(`answers.at(-1).status === "done"`);
 });
 
 test("answers open in full by default; key points are a setting and a per-answer switch", { skip }, async () => {

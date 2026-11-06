@@ -1343,6 +1343,11 @@ ipcMain.on("resize", (_e, height) => {
   // The window's height follows its content.
   const h = Math.max(44, Math.min(720, Math.round(height)));
   if (win.getSize()[1] !== h) win.setSize(width, h);
+  // Growing keeps the top fixed; if that pushes the bottom off the screen, move up.
+  const b = win.getBounds();
+  const { workArea } = screen.getDisplayMatching(b);
+  const over = b.y + b.height - (workArea.y + workArea.height);
+  if (over > 0) win.setPosition(b.x, Math.max(workArea.y, b.y - over));
 });
 ipcMain.handle("quit", () => app.quit());
 // macOS starts sending system audio only after the app reopens.

@@ -785,14 +785,16 @@ g.on("answer-start", ({ id, question, gated }) => {
   page = answers.length - 1;
   if (view === "transcript") backToSettings = false;
   view = "answers";
-  if (panel === "settings") panel = null;
+  // An answer is starting: close Settings or any other panel so it shows. Blur
+  // a focused field first so its change event saves what was typed.
+  if (panel) {
+    if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+    if (panel === "shortcuts") stopRecording();
+  }
+  panel = null;
+  backToSettings = false;
   pendingQuestion = null;
   setCollapsed(false);
-  // Asked by shortcut while a form is open: keep what's typed there, but say
-  // where the answer is.
-  if (panel) {
-    showNotice({ level: "ok", text: "Answering behind this form. Close it to see the answer." });
-  }
   renderStrip();
   try {
     localStorage.setItem("glance.seenAnswer", "1");
@@ -1535,6 +1537,7 @@ $("interviewToggle").addEventListener("click", toggleInterview);
 function setModeMenu(open) {
   $("modeMenu").hidden = !open;
   $("modeBtn").setAttribute("aria-expanded", String(open));
+  fit();
 }
 $("modeBtn").addEventListener("click", () => setModeMenu($("modeMenu").hidden));
 $("modeMenu").addEventListener("click", (e) => {
@@ -1623,9 +1626,24 @@ document.addEventListener("keydown", (e) => {
 });
 
 // Fit the window to the content so it stays as small as possible.
+// The open mode menu floats above the bottom bar and isn't part of the flow,
+// so the window grows downward (as it does for answers) until the whole menu
+// fits above the bar, then returns to its normal size when the menu closes.
+let menuRoom = 0;
+function menuClearance() {
+  const menu = $("modeMenu");
+  if (menu.hidden) return 0;
+  const barTop = $("modePick").getBoundingClientRect().top - $("glass").getBoundingClientRect().top - menuRoom;
+  return Math.max(0, Math.ceil(menu.offsetHeight + 10 - barTop));
+}
 function fit() {
+  const room = menuClearance();
+  if (room !== menuRoom) {
+    menuRoom = room;
+    document.querySelector(".dock").style.marginTop = room ? `${room}px` : "";
+  }
   const h = [...$("glass").children].reduce((sum, el) => (el.hidden || el.classList.contains("rim") ? sum : sum + el.getBoundingClientRect().height), 0);
-  g.resize(Math.ceil(h));
+  g.resize(Math.ceil(h) + menuRoom);
 }
 const sizer = new ResizeObserver(fit);
 for (const el of $("glass").children) sizer.observe(el);
