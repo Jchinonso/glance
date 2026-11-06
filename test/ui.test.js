@@ -5,13 +5,14 @@
 import { test, before, after } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import electronPath from "electron";
-import { MODELS } from "../src/models.js";
+import { MODEL } from "../src/models.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const skip = !!process.env.GLANCE_SKIP_UI || process.platform !== "darwin";
@@ -108,14 +109,22 @@ before(async () => {
   writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: modelUrl, openaiModel: "fake", autoScreen: false, style: "brief",
     // As written by builds before 1.2.4: every setting saved, Opus included.
     model: "claude-opus-5-5", effort: "low", invisible: true }));
-  // The speech model is already installed in this folder, so the UI tests don't
-  // download it. The size check is all findModel needs.
-  mkdirSync(path.join(dir, "models"), { recursive: true });
-  const modelFile = path.join(dir, "models", MODELS["small.en"].file);
-  writeFileSync(modelFile, "");
-  truncateSync(modelFile, MODELS["small.en"].size);
+  // The speech model is already installed in this folder (a stand-in: the
+  // real tokens.txt and a tiny encoder), so the UI tests don't download it,
+  // and the engine is a stand-in too (GLANCE_TEST_ASR).
+  const modelDir = path.join(dir, "models", MODEL.dir);
+  mkdirSync(modelDir, { recursive: true });
+  copyFileSync(path.join(root, "test", "fixtures", "parakeet-tokens.txt"), path.join(modelDir, "tokens.txt"));
+  writeFileSync(path.join(modelDir, "encoder.int8.onnx"), "stand-in");
+  const files = ["encoder.int8.onnx", "tokens.txt"].map((name) => {
+    const data = readFileSync(path.join(modelDir, name));
+    return { name, size: data.length, sha256: createHash("sha256").update(data).digest("hex") };
+  });
   const port = 9400 + Math.floor(Math.random() * 500);
-  app = spawn(electronPath, [root, `--remote-debugging-port=${port}`], { env: { ...process.env, GLANCE_TEST_DIR: dir }, stdio: "ignore" });
+  app = spawn(electronPath, [root, `--remote-debugging-port=${port}`], {
+    env: { ...process.env, GLANCE_TEST_DIR: dir, GLANCE_MODELS_URL: "http://127.0.0.1:9", GLANCE_TEST_MODEL_FILES: JSON.stringify(files), GLANCE_TEST_ASR: path.join(root, "test", "fixtures", "fake-asr.mjs") },
+    stdio: "ignore",
+  });
   let page;
   for (let i = 0; i < 100 && !page; i++) {
     await sleep(100);
@@ -177,7 +186,7 @@ test("first launch: welcome, about you, job description, ready", { skip }, async
 });
 
 test("setup: a missing speech model gets a compulsory step with progress and Try again", { skip }, async () => {
-  await run(`state.onboarded = false; state.speech = { status: "downloading", model: "small.en", received: 123000000, total: 488000000, error: null };
+  await run(`state.onboarded = false; state.speech = { status: "downloading", received: 123000000, total: 661190513, error: null };
     onboarding = { step: "welcome", needsKey: false, needsModel: true, use: "interviews", hide: false }; render();`);
   // Skip setup can't leave setup on any step while the model downloads.
   assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
@@ -186,10 +195,10 @@ test("setup: a missing speech model gets a compulsory step with progress and Try
   await click("#obNext");
   assert.equal(await run(`return onboarding.step;`), "speech");
   assert.equal(await run(`return document.querySelector('#onboard [data-step="speech"] .ob-title').textContent;`), "Download the speech model");
-  assert.match(await run(`return document.querySelector('#onboard [data-step="speech"] .ob-lead').textContent;`), /Glance needs this to transcribe calls\. This one-time download is about 490 MB\./);
-  assert.equal(await run(`return document.getElementById("obSpeechMeta").textContent;`), "123 of 488 MB");
+  assert.match(await run(`return document.querySelector('#onboard [data-step="speech"] .ob-lead').textContent;`), /Glance needs this to transcribe calls\. This one-time download is about 660 MB\./);
+  assert.equal(await run(`return document.getElementById("obSpeechMeta").textContent;`), "123 of 661 MB");
   assert.equal(await run(`return document.getElementById("obNext").textContent;`), "Continue");
-  assert.match(await run(`return document.getElementById("obSpeechFill").style.width;`), /25/);
+  assert.match(await run(`return document.getElementById("obSpeechFill").style.width;`), /^18\.6/);
   // Continue and Skip setup do nothing until the model is installed.
   assert.ok(await run(`return document.getElementById("obNext").disabled;`), "Continue is disabled during the download");
   assert.equal(await run(`return document.getElementById("onboardSkip").hidden;`), true);
@@ -198,78 +207,59 @@ test("setup: a missing speech model gets a compulsory step with progress and Try
   assert.equal(await run(`return onboarding.step;`), "speech");
 
   // Ready moves on by itself.
-  await run(`onboarding.step = "speech"; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  await run(`onboarding.step = "speech"; state.speech = { status: "ready", received: 661190513, total: 661190513, error: null }; render();`);
   assert.equal(await run(`return onboarding.step;`), "about");
 
   // Failure shows the message and a Try again button that asks for a retry.
-  await run(`onboarding.step = "speech"; state.speech = { status: "error", model: "small.en", received: 1000, total: 488000000, error: "No connection." }; render();`);
+  await run(`onboarding.step = "speech"; state.speech = { status: "error", received: 1000, total: 661190513, error: "No connection." }; render();`);
   assert.ok(await shown("obSpeechError"));
   assert.equal(await run(`return document.getElementById("obSpeechError").textContent;`), "No connection.");
   assert.ok(await run(`return document.getElementById("obNext").disabled;`), "a failed download can't be skipped");
   await run(`window.__retried = false; requestSpeechDownload = () => { window.__retried = true; };`);
   await click("#obSpeechRetry");
   assert.equal(await run(`return window.__retried;`), true);
-  await run(`requestSpeechDownload = () => g.downloadModel(); onboarding = null; state.onboarded = true; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  await run(`requestSpeechDownload = () => g.downloadModel(); onboarding = null; state.onboarded = true; state.speech = { status: "ready", received: 661190513, total: 661190513, error: null }; render();`);
 });
 
-test("setup: the speech step downloads the 150 MB starter model, with no preparing phase", { skip }, async () => {
-  await run(`state.onboarded = false; state.speech = { status: "downloading", model: "base.en", received: 37000000, total: ${MODELS["base.en"].size}, error: null };
-    onboarding = { step: "speech", needsKey: false, needsModel: true, use: "meetings", hide: false }; render();`);
-  assert.match(await run(`return document.getElementById("obSpeechLead").textContent;`), /about 150 MB\./);
-  assert.equal(await run(`return document.getElementById("obSpeechMeta").textContent;`), "37 of 148 MB");
-  assert.ok(await shown("obSpeechProgress"));
-  assert.equal(await run(`return document.getElementById("obSpeechPreparing");`), null, "no preparing phase in setup");
-  assert.ok(await run(`return document.getElementById("obNext").disabled;`));
-  // Ready moves on by itself; WhisperKit, if any, comes later in the background.
-  await run(`state.speech = { ...state.speech, status: "ready", received: state.speech.total }; render();`);
-  assert.equal(await run(`return onboarding.step;`), "about");
-  await run(`onboarding = null; state.onboarded = true; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
-});
-
-test("settings: Transcription shows the background upgrade, then names WhisperKit once it's in use", { skip }, async () => {
-  const saved = await run(`return JSON.stringify(state.speechEngine ?? null);`);
-  const text = () => run(`return document.getElementById("upgradeText").textContent;`);
-  // This test run has no WhisperKit helper and small.en is installed: no upgrade, Fast/Accurate.
-  assert.equal(await run(`return state.speechEngine.active;`), "whisper.cpp");
-  assert.equal(await run(`return state.speechEngine.upgrade;`), null);
-  await run(`render();`);
-  assert.equal(await run(`return document.getElementById("transcription").hidden;`), false);
-  assert.equal(await shown("upgradeStatus"), false);
-  // WhisperKit downloading in the background: whisper.cpp (base.en) for now, no Fast/Accurate.
-  const kit = (status, extra = "") => `state.speechEngine = { active: "whisper.cpp", name: "Whisper large-v3 turbo", model: "base.en", upgrade: { to: "whisperkit", status: "${status}", received: 265885000, total: 648500000, error: null ${extra} } }; render();`;
-  await run(kit("downloading"));
-  assert.ok(await shown("upgradeStatus"));
-  assert.equal(await text(), "Upgrading to Whisper large-v3 turbo: downloading 41%");
-  assert.equal(await run(`return document.getElementById("transcription").hidden;`), true);
-  assert.match(await run(`return document.getElementById("transcriptionHint").textContent;`), /whisper\.cpp \(base\.en\)/);
-  assert.equal(await shown("upgradeRetry"), false);
-  await run(kit("preparing"));
-  assert.equal(await text(), "Upgrading to Whisper large-v3 turbo: preparing for this Mac (one time, can take up to 20 minutes)");
-  await run(kit("loading"));
-  assert.equal(await text(), "Loading Whisper large-v3 turbo…");
-  await run(kit("error", `, error: "The speech model download failed. Check your connection."`));
+test("settings: Speech is one plain row, Parakeet on this Mac, with download status and Try again only when needed", { skip }, async () => {
+  const saved = await run(`return JSON.stringify(state.speech);`);
+  const hint = () => run(`return document.getElementById("speechHint").textContent;`);
+  const text = () => run(`return document.getElementById("speechStatusText").textContent;`);
+  // This test run: the (stand-in) model is installed and the engine loaded.
+  for (let i = 0; i < 100 && !(await run(`const s = (await g.getState()).speech; return s.status === "ready" && s.engine === "ready";`)); i++) await sleep(100);
+  await run(`state.speech = (await g.getState()).speech; render();`);
+  assert.equal(await run(`return state.speech.engine;`), "ready");
+  assert.equal(await run(`return document.querySelector("#speechHint").closest(".row").querySelector("span").textContent;`), "Speech");
+  assert.equal(await hint(), "Parakeet (on this Mac)");
+  assert.equal(await shown("speechStatus"), false);
+  // No model choice, no Fast/Accurate, nothing about Whisper anywhere.
+  assert.equal(await run(`return document.getElementById("transcription");`), null);
+  assert.doesNotMatch(await run(`return document.body.innerText + document.body.innerHTML;`), /whisper|turbo|neural engine|small\.en|base\.en|Accurate/i);
+  // Words to recognize stays.
+  assert.ok(await run(`return !!document.getElementById("vocabularyInput");`));
+  const set = (speech) => run(`state.speech = { status: "ready", received: 661190513, total: 661190513, error: null, engine: "ready", ...${JSON.stringify(speech)} }; render();`);
+  await set({ status: "downloading", received: 280000000, engine: "off" });
+  assert.equal(await text(), "Downloading the speech model: 42%");
+  assert.equal(await shown("speechRetry"), false);
+  await set({ status: "checking", engine: "off" });
+  assert.equal(await text(), "Checking the speech model…");
+  await set({ engine: "loading" });
+  assert.equal(await text(), "Loading the speech model…");
+  await set({ engine: "failed" });
+  assert.equal(await text(), "The speech engine stopped. Quit and reopen Glance.");
+  await set({ status: "error", received: 1000, engine: "off", error: "The speech model download failed. Check your connection." });
   assert.equal(await text(), "The speech model download failed. Check your connection.");
-  assert.ok(await shown("upgradeRetry"));
+  assert.ok(await shown("speechRetry"));
   await run(`window.__retried = false; requestSpeechDownload = () => { window.__retried = true; };`);
-  await click("#upgradeRetry");
+  await click("#speechRetry");
   assert.equal(await run(`return window.__retried;`), true);
-  await run(`requestSpeechDownload = () => g.downloadModel();`);
-  // In use: named, nothing pending.
-  await run(`state.speechEngine = { active: "whisperkit", name: "Whisper large-v3 turbo", model: "base.en", upgrade: { to: "whisperkit", status: "ready", received: 648500000, total: 648500000, error: null } }; render();`);
-  assert.equal(await run(`return document.getElementById("transcription").hidden;`), true);
-  assert.equal(await run(`return document.getElementById("transcriptionHint").textContent;`), "Whisper large-v3 turbo (Neural Engine)");
-  assert.equal(await shown("upgradeStatus"), false);
-  // A Mac without WhisperKit: small.en in the background, Fast/Accurate stays.
-  await run(`state.speechEngine = { active: "whisper.cpp", name: "Whisper large-v3 turbo", model: "base.en", upgrade: { to: "small.en", status: "downloading", received: 243807100, total: 487614201, error: null } }; render();`);
-  assert.equal(await text(), "Upgrading to the Accurate model: downloading 50%");
-  assert.equal(await run(`return document.getElementById("transcription").hidden;`), false);
-  assert.equal(await run(`return document.getElementById("transcriptionHint").textContent;`), "Accurate is slower but better with accents and noise");
-  await run(`state.speechEngine = ${saved}; render();`);
+  await run(`requestSpeechDownload = () => g.downloadModel(); state.speech = ${saved}; render();`);
+  assert.equal(await hint(), "Parakeet (on this Mac)");
 });
 
 test("setup: an installed speech model means no speech step", { skip }, async () => {
   assert.equal(await run(`return onboardingSteps({ needsKey: false, needsModel: false, use: "interviews" }).includes("speech");`), false);
-  await run(`state.onboarded = false; state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; startOnboarding(); render();`);
+  await run(`state.onboarded = false; state.speech = { status: "ready", received: 661190513, total: 661190513, error: null }; startOnboarding(); render();`);
   assert.equal(await run(`return onboarding.step;`), "welcome");
   await click("#obNext");
   assert.notEqual(await run(`return onboarding.step;`), "speech");
@@ -278,7 +268,7 @@ test("setup: an installed speech model means no speech step", { skip }, async ()
 
 test("setup: a returning user's speech step closes setup once the model is ready", { skip }, async () => {
   await run(`state.onboarded = true; state.style = "brief"; state.resume = "Jane Doe, engineer";
-    state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
+    state.speech = { status: "downloading", received: 100000000, total: 661190513, error: null };
     startOnboarding("speech"); render();`);
   assert.equal(await run(`return onboarding.step;`), "speech");
   assert.ok(await run(`return document.getElementById("obNext").disabled;`));
@@ -286,35 +276,35 @@ test("setup: a returning user's speech step closes setup once the model is ready
   await click("#obNext");
   assert.equal(await run(`return onboarding.step;`), "speech", "Continue waits for the model");
   // Ready closes setup on its own for a returning user.
-  await run(`state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  await run(`state.speech = { status: "ready", received: 661190513, total: 661190513, error: null }; render();`);
   await until(`onboarding === null`);
   assert.equal(await run(`return state.onboarded;`), true);
 
   // Interview mode still needs the resume step before setup can close.
   await run(`state.onboarded = true; state.style = "interview"; state.resume = "";
-    state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
+    state.speech = { status: "downloading", received: 100000000, total: 661190513, error: null };
     startOnboarding("speech"); render();`);
   assert.equal(await run(`return onboarding.step;`), "speech");
   await click("#obNext");
   assert.equal(await run(`return onboarding.step;`), "speech");
-  await run(`state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  await run(`state.speech = { status: "ready", received: 661190513, total: 661190513, error: null }; render();`);
   await until(`onboarding?.step === "about"`);
   assert.ok(await shown("obResume"));
   await run(`onboarding = null;
     await g.setSetting("resume", "Jane Doe, engineer");
     await g.setSetting("style", "brief");
     await g.setSetting("setupActive", false);
-    state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null };
+    state.speech = { status: "ready", received: 661190513, total: 661190513, error: null };
     render();`);
   await until(`state.style === "brief" && !!state.resume`);
 });
 
 test("setup: a speech step that finished by itself doesn't bounce when you go Back", { skip }, async () => {
   await run(`onboarding = null; state.onboarded = false; state.style = "brief";
-    state.speech = { status: "downloading", model: "small.en", received: 100000000, total: 488000000, error: null };
+    state.speech = { status: "downloading", received: 100000000, total: 661190513, error: null };
     onboarding = { step: "speech", needsKey: false, needsModel: true, use: "meetings", hide: false }; render();`);
   assert.equal(await run(`return onboarding.sawSpeechDownloading;`), true);
-  await run(`state.speech = { status: "ready", model: "small.en", received: 488000000, total: 488000000, error: null }; render();`);
+  await run(`state.speech = { status: "ready", received: 661190513, total: 661190513, error: null }; render();`);
   assert.equal(await run(`return onboarding.step;`), "about");
   assert.equal(await run(`return !!onboarding.sawSpeechDownloading;`), false);
   // Back onto the installed step stays there instead of bouncing forward.

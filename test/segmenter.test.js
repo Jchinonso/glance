@@ -31,29 +31,6 @@ test("ignores short blips", () => {
   assert.equal(count, 0);
 });
 
-test("listener refuses to start without its tools, with one clear error", async () => {
-  const { Listener } = await import("../src/audio.js");
-  const l = new Listener({ modelPath: "/nonexistent/model.bin", whisperBinary: "whisper-cli-missing" });
-  const errors = [];
-  l.on("error", (e) => errors.push(e));
-  assert.equal(l.start(), false);
-  assert.equal(errors.length, 1);
-  assert.match(errors[0], /brew install whisper-cpp/);
-});
-
-test("listener reports when capture dies on its own", async () => {
-  const { Listener } = await import("../src/audio.js");
-  const here = new URL("../package.json", import.meta.url).pathname; // any existing file stands in for the model
-  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: "/usr/bin/false" });
-  const errors = [];
-  l.on("error", (e) => errors.push(e));
-  const ended = new Promise((resolve) => l.on("ended", resolve));
-  assert.equal(l.start(), true);
-  await ended;
-  assert.ok(errors.some((e) => /System audio/.test(e)), errors.join(" | "));
-  assert.equal(l.running, false);
-});
-
 test("steady background noise is not mistaken for speech", () => {
   const seg = new Segmenter();
   let count = 0;
@@ -85,54 +62,10 @@ async function fakeTee(source) {
   return bin;
 }
 
-// A stand-in for whisper-cli that prints fixed text.
-async function fakeCli(text) {
-  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const dir = mkdtempSync(new URL("file://" + tmpdir() + "/glance-cli-").pathname);
-  const bin = `${dir}/whisper-cli`;
-  writeFileSync(bin, `#!/bin/sh\necho ${JSON.stringify(text)}\n`);
-  chmodSync(bin, 0o755);
-  return bin;
-}
-
-test("heard lines carry transcribe timing and the transcriber used", async () => {
-  const { Listener } = await import("../src/audio.js");
-  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: "/usr/bin/true" });
-  l.server.transcribe = async () => {
-    await new Promise((r) => setTimeout(r, 30));
-    return "hello there";
-  };
-  const lines = [];
-  l.on("line", (line) => lines.push(line));
-  l.enqueue(pcm(1, 8000));
-  l.enqueue(pcm(1, 8000));
-  await new Promise((r) => setTimeout(r, 200));
-  assert.equal(lines.length, 2);
-  assert.equal(lines[0].via, "server");
-  assert.ok(lines[0].transcribeMs >= 25, `transcribeMs ${lines[0].transcribeMs}`);
-  assert.ok(Number.isFinite(lines[0].transcribedAt));
-  assert.equal(lines[0].queued, 1);
-  assert.equal(lines[1].queued, 0);
-  assert.equal(lines[0].at - lines[0].start, 1000);
-});
-
-test("heard lines say when whisper-cli did the transcription", async () => {
-  const { Listener } = await import("../src/audio.js");
-  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: await fakeCli("hello from cli") });
-  l.server.transcribe = async () => null;
-  const got = new Promise((r) => l.once("line", r));
-  l.enqueue(pcm(1, 8000));
-  const line = await got;
-  assert.equal(line.via, "cli");
-  assert.equal(line.text, "hello from cli");
-  assert.equal(line.queued, 0);
-});
 
 test("listener warns once when nothing but silence arrives (system audio blocked)", async () => {
   const { Listener } = await import("../src/audio.js");
-  const here = new URL("../package.json", import.meta.url).pathname;
-  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/zero"), silentAfterMs: 1500 });
+    const l = new Listener({ asr: fakeAsr(), audioteePath: await fakeTee("/dev/zero"), silentAfterMs: 1500 });
   let silent = 0;
   l.on("silent", () => silent++);
   l.on("error", () => {});
@@ -144,8 +77,7 @@ test("listener warns once when nothing but silence arrives (system audio blocked
 
 test("listener warns about silence only once per run, not on every Listen", async () => {
   const { Listener } = await import("../src/audio.js");
-  const here = new URL("../package.json", import.meta.url).pathname;
-  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/zero"), silentAfterMs: 800 });
+    const l = new Listener({ asr: fakeAsr(), audioteePath: await fakeTee("/dev/zero"), silentAfterMs: 800 });
   let silent = 0;
   l.on("silent", () => silent++);
   l.on("error", () => {});
@@ -159,8 +91,7 @@ test("listener warns about silence only once per run, not on every Listen", asyn
 
 test("listener doesn't warn once real sound has arrived", async () => {
   const { Listener } = await import("../src/audio.js");
-  const here = new URL("../package.json", import.meta.url).pathname;
-  const l = new Listener({ modelPath: here, whisperBinary: "/usr/bin/true", audioteePath: await fakeTee("/dev/urandom"), silentAfterMs: 4000 });
+    const l = new Listener({ asr: fakeAsr(), audioteePath: await fakeTee("/dev/urandom"), silentAfterMs: 4000 });
   let silent = 0;
   l.on("silent", () => silent++);
   l.on("error", () => {});
@@ -173,74 +104,124 @@ test("listener doesn't warn once real sound has arrived", async () => {
   assert.equal(silent, 0);
 });
 
-// A stand-in whisper-cli that fails like that Mac's Metal backend unless it's
-// told to use the CPU (-ng); with failNoGpu, it fails without the GPU too.
-async function gpuBrokenCli({ failNoFa = true, failCpu = false } = {}) {
-  const { mkdtempSync, writeFileSync, chmodSync } = await import("node:fs");
-  const { tmpdir } = await import("node:os");
-  const dir = mkdtempSync(new URL("file://" + tmpdir() + "/glance-cli-").pathname);
-  const bin = `${dir}/whisper-cli`;
-  const fail = `echo "src/ggml-backend.cpp:1089: pre-allocated tensor (leaf_0) in a buffer (MTL0) that cannot run the operation (NONE)" >&2; exit 134`;
-  writeFileSync(bin, `#!/bin/sh
-case " $* " in
-  *" -ng "*) ${failCpu ? fail : 'echo "hello on the cpu"'} ;;
-  *" -nfa "*) ${failNoFa ? fail : 'echo "hello without flash attention"'} ;;
-  *) ${fail} ;;
-esac
-`);
-  chmodSync(bin, 0o755);
-  return bin;
+// A stand-in engine: answers each piece with the next of `texts` (an
+// { error } entry fails that call), recording what it was asked.
+function fakeAsr(texts = ["hello there"], delayMs = 0) {
+  const asr = { calls: [], loads: [] };
+  asr.load = async (opts) => (asr.loads.push(opts), true);
+  asr.transcribe = async (pcm, opts) => {
+    asr.calls.push({ bytes: pcm.length, ...opts });
+    await new Promise((r) => setTimeout(r, delayMs));
+    const next = texts.length > 1 ? texts.shift() : texts[0];
+    return typeof next === "string" ? { text: next, ms: delayMs } : next;
+  };
+  return asr;
 }
 
-test("a GPU failure steps down to the next mode and retries the same piece", async () => {
+test("heard lines come from the engine, with timings and the hotwords", async () => {
   const { Listener } = await import("../src/audio.js");
-  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: await gpuBrokenCli() });
-  l.server.transcribe = async () => null;
-  const modes = [];
-  l.on("mode", (m) => modes.push(m));
-  const errors = [];
-  l.on("error", (e) => errors.push(e));
-  const got = new Promise((r) => l.once("line", r));
+  const asr = fakeAsr(["hello there"], 30);
+  const l = new Listener({ asr, hotwords: ["Postgres"] });
+  const lines = [];
+  l.on("line", (line) => lines.push(line));
   l.enqueue(pcm(1, 8000));
-  const line = await got;
-  assert.equal(line.text, "hello on the cpu");
-  assert.deepEqual(modes, ["gpu-nofa", "cpu"]);
-  assert.equal(l.mode, "cpu");
-  assert.deepEqual(errors, []);
+  l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 300));
+  assert.equal(lines.length, 2);
+  assert.equal(lines[0].text, "hello there");
+  assert.equal(lines[0].via, "parakeet");
+  assert.ok(lines[0].transcribeMs >= 25, `transcribeMs ${lines[0].transcribeMs}`);
+  assert.equal(lines[0].decodeMs, 30);
+  assert.ok(Number.isFinite(lines[0].transcribedAt));
+  assert.equal(lines[0].queued, 1);
+  assert.equal(lines[1].queued, 0);
+  assert.equal(lines[0].at - lines[0].start, 1000);
+  assert.deepEqual(asr.calls[0].hotwords, ["Postgres"]);
+  assert.equal(asr.calls[0].bytes, RATE * 2);
+  l.setHotwords(["Ledgerly"]);
+  l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(asr.calls.at(-1).hotwords, ["Ledgerly"]);
 });
 
-test("without flash attention is enough when that works; a remembered mode is used from the start", async () => {
+test("prepare loads the model with the hotwords before the first Listen", async () => {
   const { Listener } = await import("../src/audio.js");
-  const bin = await gpuBrokenCli({ failNoFa: false });
-  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: bin });
-  l.server.transcribe = async () => null;
-  const got = new Promise((r) => l.once("line", r));
-  l.enqueue(pcm(1, 8000));
-  assert.equal((await got).text, "hello without flash attention");
-  assert.equal(l.mode, "gpu-nofa");
-  const again = new Listener({ modelPath: "/nonexistent", whisperBinary: bin, mode: "gpu-nofa" });
-  again.server.transcribe = async () => null;
-  const modes = [];
-  again.on("mode", (m) => modes.push(m));
-  const next = new Promise((r) => again.once("line", r));
-  again.enqueue(pcm(1, 8000));
-  assert.equal((await next).text, "hello without flash attention");
-  assert.deepEqual(modes, []);
+  const asr = fakeAsr();
+  const l = new Listener({ asr, hotwords: ["React"] });
+  await l.prepare();
+  assert.deepEqual(asr.loads, [{ hotwords: ["React"] }]);
 });
 
-test("when every mode fails, the window gets one plain sentence and the log gets the details", async () => {
+test("noise the engine turns into text is dropped", async () => {
   const { Listener } = await import("../src/audio.js");
-  const l = new Listener({ modelPath: "/nonexistent", whisperBinary: await gpuBrokenCli({ failCpu: true }) });
-  l.server.transcribe = async () => null;
+  const l = new Listener({ asr: fakeAsr(["  ", "(music)", "Thank you.", "Real words."]) });
+  const lines = [];
+  l.on("line", (line) => lines.push(line.text));
+  for (let i = 0; i < 4; i++) l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 100));
+  assert.deepEqual(lines, ["Real words."]);
+});
+
+test("a failed piece is tried once more; a broken engine gives one plain sentence per Listen", async () => {
+  const { Listener } = await import("../src/audio.js");
+  // First piece fails once then works; after that every call fails.
+  const l = new Listener({ asr: fakeAsr([{ error: "speech engine stopped (SIGSEGV)" }, "back again", { error: "speech engine failed" }]) });
+  const lines = [];
   const errors = [];
   const details = [];
+  l.on("line", (line) => lines.push(line.text));
   l.on("error", (e) => errors.push(e));
   l.on("detail", (d) => details.push(d));
   l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 50));
+  assert.deepEqual(lines, ["back again"]);
+  assert.equal(errors.length, 0);
   l.enqueue(pcm(1, 8000));
-  await new Promise((r) => setTimeout(r, 1500));
+  l.enqueue(pcm(1, 8000));
+  await new Promise((r) => setTimeout(r, 50));
   assert.equal(errors.length, 1);
-  assert.doesNotMatch(errors[0], /ggml|MTL|tensor|\/Applications/);
-  assert.match(errors[0], /can't transcribe on this Mac/);
-  assert.match(details[0], /MTL0/);
+  assert.match(errors[0], /can't transcribe on this Mac right now/);
+  assert.ok(details.some((d) => /SIGSEGV/.test(d)), details.join(" | "));
+});
+
+test("listener refuses to start before the speech model is in, with one clear error", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ asr: null });
+  const errors = [];
+  l.on("error", (e) => errors.push(e));
+  assert.equal(l.start(), false);
+  assert.equal(errors.length, 1);
+  assert.match(errors[0], /speech model is missing/);
+});
+
+test("listener with the real engine module and a stand-in model emits lines", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const { Asr } = await import("../src/asr.js");
+  const { mkdtempSync, copyFileSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const modelDir = mkdtempSync(`${tmpdir()}/glance-model-`);
+  copyFileSync(new URL("./fixtures/parakeet-tokens.txt", import.meta.url), `${modelDir}/tokens.txt`);
+  const asr = new Asr({ modelDir, env: { GLANCE_TEST_ASR: new URL("./fixtures/fake-asr.mjs", import.meta.url).pathname } });
+  try {
+    const l = new Listener({ asr, hotwords: ["Postgres"] });
+    const got = new Promise((r) => l.once("line", r));
+    l.enqueue(pcm(0.5, 8000));
+    const line = await got;
+    assert.equal(line.via, "parakeet");
+    assert.match(line.text, /^heard 8000 samples hotwords=Postgres :1\.0 vocab from /);
+  } finally {
+    asr.stop();
+  }
+});
+
+test("listener reports when capture dies on its own", async () => {
+  const { Listener } = await import("../src/audio.js");
+  const l = new Listener({ asr: fakeAsr(), audioteePath: "/usr/bin/false" });
+  const errors = [];
+  l.on("error", (e) => errors.push(e));
+  const ended = new Promise((resolve) => l.on("ended", resolve));
+  assert.equal(l.start(), true);
+  await ended;
+  assert.ok(errors.some((e) => /System audio/.test(e)), errors.join(" | "));
+  assert.equal(l.running, false);
 });

@@ -3,13 +3,14 @@
 // OpenAI-compatible model, walks through the main screens and captures each.
 //   node scripts/screenshots.mjs
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, truncateSync, writeFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import electronPath from "electron";
-import { MODELS } from "../src/models.js";
+import { MODEL } from "../src/models.js";
 
 const root = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 const out = path.join(root, "docs", "images");
@@ -56,13 +57,20 @@ await new Promise((r) => server.listen(0, "127.0.0.1", r));
 
 const dir = mkdtempSync(path.join(os.tmpdir(), "glance-shots-"));
 writeFileSync(path.join(dir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: `http://127.0.0.1:${server.address().port}/v1`, openaiModel: "gpt-4o", autoScreen: false, style: "interview", invisible: true, resume: RESUME, jobDescription: JOB, profileName: "Jane Doe", notice: "4 weeks" }));
-// The speech model is already installed, so setup goes straight past its step.
-mkdirSync(path.join(dir, "models"), { recursive: true });
-const modelFile = path.join(dir, "models", MODELS["small.en"].file);
-writeFileSync(modelFile, "");
-truncateSync(modelFile, MODELS["small.en"].size);
+// The speech model is already installed, so setup goes straight past its step:
+// a stand-in (the real tokens.txt and a tiny encoder), with a stand-in engine
+// (GLANCE_TEST_ASR), as in the UI tests, so the real 660 MB isn't needed.
+const modelDir = path.join(dir, "models", MODEL.dir);
+mkdirSync(modelDir, { recursive: true });
+copyFileSync(path.join(root, "test", "fixtures", "parakeet-tokens.txt"), path.join(modelDir, "tokens.txt"));
+writeFileSync(path.join(modelDir, "encoder.int8.onnx"), "stand-in");
+const standInFiles = ["encoder.int8.onnx", "tokens.txt"].map((name) => {
+  const data = readFileSync(path.join(modelDir, name));
+  return { name, size: data.length, sha256: createHash("sha256").update(data).digest("hex") };
+});
+const standIn = { GLANCE_TEST_MODEL_FILES: JSON.stringify(standInFiles), GLANCE_TEST_ASR: path.join(root, "test", "fixtures", "fake-asr.mjs") };
 const port = 9900 + Math.floor(Math.random() * 90);
-const app = spawn(electronPath, [root, `--remote-debugging-port=${port}`, "--force-device-scale-factor=2"], { env: { ...process.env, GLANCE_TEST_DIR: dir, ANTHROPIC_API_KEY: "sk-ant-placeholder-1234" }, stdio: "ignore" });
+const app = spawn(electronPath, [root, `--remote-debugging-port=${port}`, "--force-device-scale-factor=2"], { env: { ...process.env, GLANCE_TEST_DIR: dir, ANTHROPIC_API_KEY: "sk-ant-placeholder-1234", ...standIn }, stdio: "ignore" });
 
 let page;
 for (let i = 0; i < 100 && !page; i++) {
@@ -143,8 +151,8 @@ rmSync(dir, { recursive: true, force: true });
 // local server that sends about 40% of the file and then holds the connection.
 const speechDir = mkdtempSync(path.join(os.tmpdir(), "glance-shots-speech-"));
 writeFileSync(path.join(speechDir, "config.json"), JSON.stringify({ provider: "openai", openaiBaseUrl: `http://127.0.0.1:${server.address().port}/v1`, openaiModel: "gpt-4o", autoScreen: false, style: "interview", invisible: true, resume: RESUME, jobDescription: JOB, profileName: "Jane Doe", notice: "4 weeks" }));
-const modelSize = MODELS["small.en"].size;
-const holdAfter = Math.floor(modelSize * 0.4);
+// The encoder is the first and largest file: hold at about 40% of it.
+const holdAfter = Math.floor(MODEL.files[0].size * 0.4);
 const held = [];
 const modelServer = http.createServer((req, res) => {
   req.resume();

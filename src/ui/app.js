@@ -207,43 +207,22 @@ function renderMenu() {
   const providerLabel = (state.providers || []).find((p) => p.id === state.provider)?.label || "Anthropic";
   $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${state.keyFromEnv}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
-  for (const b of $("transcription").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.transcription));
   for (const b of $("theme").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.theme));
+  // One engine: Parakeet, on this Mac. Only the download and an engine
+  // that won't start get a line here.
   const speech = state.speech || {};
-  // The engine in use, and the background upgrade (WhisperKit where this Mac
-  // can run it, else small.en) while whisper.cpp does the work.
-  const eng = state.speechEngine || {};
-  const kitName = eng.name || "Whisper large-v3 turbo";
-  const kitActive = eng.active === "whisperkit";
-  const up = eng.upgrade;
-  const kitPath = kitActive || up?.to === "whisperkit";
-  // Fast/Accurate only chooses whisper.cpp's model: not shown on the WhisperKit path.
-  $("transcription").hidden = kitPath;
-  $("transcriptionHint").textContent =
-    kitActive ? `${kitName} (Neural Engine)`
-    : kitPath ? `Using whisper.cpp (${eng.model || "base.en"}) until the upgrade is ready`
-    : "Accurate is slower but better with accents and noise";
-  const upShown = !kitActive && !!up && up.status !== "ready";
-  $("upgradeStatus").hidden = !upShown;
-  $("upgradeStatus").classList.toggle("caution", upShown && up.status === "error");
-  $("upgradeRetry").hidden = !upShown || up.status !== "error";
-  if (upShown) {
-    const pct = Math.round((100 * (up.received || 0)) / (up.total || 1));
-    $("upgradeText").textContent =
-      up.status === "error" ? up.error || "The speech model download failed."
-      : up.to === "small.en" ? `Upgrading to the Accurate model: downloading ${pct}%`
-      : up.status === "preparing" ? `Upgrading to ${kitName}: preparing for this Mac (one time, can take up to 20 minutes)`
-      : up.status === "loading" ? `Loading ${kitName}…`
-      : `Upgrading to ${kitName}: downloading ${pct}%`;
-  }
-  const fastModel = !kitPath && state.transcription === "fast" && speech.model === "base.en" && speech.status !== "ready";
-  $("fastModelStatus").hidden = !fastModel;
-  $("fastModelStatus").classList.toggle("caution", fastModel && speech.status === "error");
-  if (fastModel) {
-    const pct = Math.round((100 * (speech.received || 0)) / (speech.total || 1));
-    $("fastModelText").textContent = speech.status === "error" ? speech.error || "The fast speech model download failed." : `Downloading fast model… ${pct}%`;
-    $("fastModelRetry").hidden = speech.status !== "error";
-  } else $("fastModelRetry").hidden = true;
+  const pct = Math.floor((100 * (speech.received || 0)) / (speech.total || 1));
+  const speechText =
+    speech.status === "error" ? speech.error || "The speech model download failed."
+    : speech.status === "downloading" ? `Downloading the speech model: ${pct}%`
+    : speech.status === "checking" ? "Checking the speech model…"
+    : speech.engine === "loading" ? "Loading the speech model…"
+    : speech.engine === "failed" ? "The speech engine stopped. Quit and reopen Glance."
+    : "";
+  $("speechStatus").hidden = !speechText;
+  $("speechStatus").classList.toggle("caution", speech.status === "error" || speech.engine === "failed");
+  $("speechStatusText").textContent = speechText;
+  $("speechRetry").hidden = speech.status !== "error";
   if (document.activeElement !== $("vocabularyInput")) $("vocabularyInput").value = state.vocabulary || "";
   for (const b of $("style").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === meetingStyle()));
 }
@@ -446,7 +425,15 @@ function formatDollars(n) {
   return n < 0.01 ? `$${n.toFixed(4)}` : `$${n.toFixed(2)}`;
 }
 
+// Opened while the speech model was being checked: set up the speech step if
+// the check found it missing.
+let speechCheckPending = false;
+
 function render() {
+  if (speechCheckPending && state.speech?.status !== "checking") {
+    speechCheckPending = false;
+    if (state.speech?.status !== "ready" && state.onboarded && !onboarding) startOnboarding("speech");
+  }
   renderShortcutHints();
   renderStrip();
   renderMenu();
@@ -1337,10 +1324,6 @@ $("effort").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (v) g.setSetting("effort", v);
 });
-$("transcription").addEventListener("click", (e) => {
-  const v = e.target.closest("button")?.dataset.value;
-  if (v) g.setSetting("transcription", v);
-});
 $("theme").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (v) g.setSetting("theme", v);
@@ -1692,10 +1675,10 @@ function renderOnboarding() {
   if (step === "speech") {
     const speech = state.speech || {};
     if (speech.status !== "ready") onboarding.sawSpeechDownloading = true;
-    const total = speech.total || 148_000_000;
+    const total = speech.total || 661_000_000;
     const received = Math.min(speech.received || 0, total);
     const mb = (n) => Math.round(n / 1_000_000).toLocaleString();
-    // Rounded to tens: "about 150 MB" for the starter model (base.en).
+    // Rounded to tens: "about 660 MB" for Parakeet.
     $("obSpeechLead").textContent = `Glance needs this to transcribe calls. This one-time download is about ${Math.round(total / 10_000_000) * 10} MB.`;
     $("obSpeechFill").style.width = `${total ? (100 * received) / total : 0}%`;
     $("obSpeechMeta").textContent = `${mb(received)} of ${mb(total)} MB`;
@@ -1793,8 +1776,7 @@ function requestSpeechDownload() {
   return g.downloadModel();
 }
 $("obSpeechRetry").addEventListener("click", () => requestSpeechDownload());
-$("fastModelRetry").addEventListener("click", () => requestSpeechDownload());
-$("upgradeRetry").addEventListener("click", () => requestSpeechDownload());
+$("speechRetry").addEventListener("click", () => requestSpeechDownload());
 $("obUse").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (!v) return;
@@ -1878,9 +1860,13 @@ g.getState().then((s) => {
   heard.forEach(renderTranscriptLine);
   // Setup until done; and again while Interview mode has no resume, since
   // interview answers are built from it (Skip setup can't leave without one).
-  // A missing speech model brings back just that step.
+  // A missing speech model brings back just that step. While Glance is
+  // still checking the files on disk, wait for the answer (see render).
   if (!state.onboarded) startOnboarding();
-  else if (state.speech?.status !== "ready") startOnboarding("speech");
+  else if (state.speech?.status === "checking") {
+    speechCheckPending = true;
+    if (resumeMissing()) startOnboarding("about");
+  } else if (state.speech?.status !== "ready") startOnboarding("speech");
   else if (resumeMissing()) startOnboarding("about");
   else maybeAskJob(); // opened in Interview mode: likely a new interview
   render();

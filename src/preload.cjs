@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld("glance", {
   setSaid: (id, text) => ipcRenderer.invoke("set-said", id, text),
   toggleListening: () => ipcRenderer.invoke("toggle-listening"),
   downloadModel: () => ipcRenderer.invoke("download-model"),
+  testHeard: (line) => ipcRenderer.invoke("test-heard", line), // test mode only
   setApiKey: (key) => ipcRenderer.invoke("set-api-key", key),
   listModels: (options) => ipcRenderer.invoke("list-models", options),
   testConnection: (options) => ipcRenderer.invoke("test-connection", options),

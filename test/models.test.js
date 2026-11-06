@@ -5,14 +5,24 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import http from "node:http";
 import os from "node:os";
 import path from "node:path";
-import { downloadModel, findModel, MODELS } from "../src/models.js";
+import { downloadModel, MODEL, modelPresent, modelSize, removeOldModels, verifyModel } from "../src/models.js";
 
 const DATA = Buffer.alloc(200_000, 7);
+const SMALL = Buffer.from("tokens\n");
 const sha256 = (buffer) => createHash("sha256").update(buffer).digest("hex");
+const BYTES = { "encoder.onnx": DATA, "tokens.txt": SMALL };
 
+// A two-file stand-in for the Parakeet model.
 function model(overrides = {}) {
-  return { "test.en": { file: "ggml-test.en.bin", size: DATA.length, sha256: sha256(DATA), ...overrides } };
+  return {
+    dir: "test-model",
+    files: [
+      { name: "encoder.onnx", size: DATA.length, sha256: sha256(DATA), ...overrides },
+      { name: "tokens.txt", size: SMALL.length, sha256: sha256(SMALL) },
+    ],
+  };
 }
+const bytesFor = (req) => BYTES[path.basename(req.url)];
 
 async function serve(handler) {
   const server = http.createServer(handler);
@@ -37,120 +47,158 @@ function sendRange(req, res, data) {
   res.end(data.subarray(start));
 }
 
-test("downloads, verifies and renames the model", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
-  const { url, close } = await serve((req, res) => sendRange(req, res, DATA));
+test("downloads every file, verifies them, and reports progress over the whole model", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
+  const { url, close } = await serve((req, res) => (bytesFor(req) ? sendRange(req, res, bytesFor(req)) : res.writeHead(404).end()));
   try {
     const progress = [];
-    const file = await downloadModel("test.en", { dir, baseUrl: url, models: model(), onProgress: (p) => progress.push(p) });
-    assert.equal(file, path.join(dir, "ggml-test.en.bin"));
-    assert.deepEqual(await readFile(file), DATA);
-    await assert.rejects(stat(`${file}.part`), /ENOENT/);
-    assert.equal(progress.at(-1).received, DATA.length);
-    assert.equal(progress.at(-1).total, DATA.length);
+    const dir = await downloadModel({ root, baseUrl: url, model: model(), onProgress: (p) => progress.push(p) });
+    assert.equal(dir, path.join(root, "test-model"));
+    assert.deepEqual(await readFile(path.join(dir, "encoder.onnx")), DATA);
+    assert.deepEqual(await readFile(path.join(dir, "tokens.txt")), SMALL);
+    await assert.rejects(stat(path.join(dir, "encoder.onnx.part")), /ENOENT/);
+    assert.deepEqual(progress.at(-1), { received: DATA.length + SMALL.length, total: DATA.length + SMALL.length });
+    assert.equal(progress[0].received, 0);
+    assert.ok(modelPresent(root, model()));
+    assert.deepEqual(await verifyModel(root, model()), []);
   } finally {
     await close();
-    await rm(dir, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("an interrupted download keeps the .part and resumes with Range", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
   const ranges = [];
   let first = true;
   const { url, close } = await serve((req, res) => {
-    ranges.push(req.headers.range || null);
-    if (first) {
-      first = false;
-      res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(DATA.length) });
-      res.write(DATA.subarray(0, 80_000), () => setTimeout(() => res.destroy(), 20));
-      return;
+    if (path.basename(req.url) === "encoder.onnx") {
+      ranges.push(req.headers.range || null);
+      if (first) {
+        first = false;
+        res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(DATA.length) });
+        res.write(DATA.subarray(0, 80_000), () => setTimeout(() => res.destroy(), 20));
+        return;
+      }
     }
-    sendRange(req, res, DATA);
+    sendRange(req, res, bytesFor(req));
   });
   try {
-    const opts = { dir, baseUrl: url, models: model() };
-    await assert.rejects(downloadModel("test.en", opts));
-    assert.ok((await stat(path.join(dir, "ggml-test.en.bin.part"))).size > 0);
-    const file = await downloadModel("test.en", opts);
-    assert.deepEqual(await readFile(file), DATA);
+    const opts = { root, baseUrl: url, model: model() };
+    await assert.rejects(downloadModel(opts));
+    assert.ok((await stat(path.join(root, "test-model", "encoder.onnx.part"))).size > 0);
+    const dir = await downloadModel(opts);
+    assert.deepEqual(await readFile(path.join(dir, "encoder.onnx")), DATA);
     assert.equal(ranges[0], null);
     assert.match(ranges[1], /^bytes=[1-9]\d*-$/);
   } finally {
     await close();
-    await rm(dir, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("a stalled download times out, keeps the .part and resumes", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
+  const root = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
   const held = [];
   const stalled = await serve((req, res) => {
     res.writeHead(200, { "content-type": "application/octet-stream", "content-length": String(DATA.length) });
     res.write(DATA.subarray(0, 80_000));
     held.push(res);
   });
-  const normal = await serve((req, res) => sendRange(req, res, DATA));
+  const normal = await serve((req, res) => sendRange(req, res, bytesFor(req)));
   try {
-    await assert.rejects(downloadModel("test.en", { dir, baseUrl: stalled.url, models: model(), idleMs: 300 }), {
+    await assert.rejects(downloadModel({ root, baseUrl: stalled.url, model: model(), idleMs: 300 }), {
       message: "The speech model download stalled. Check your connection.",
     });
-    const part = path.join(dir, "ggml-test.en.bin.part");
+    const part = path.join(root, "test-model", "encoder.onnx.part");
     assert.ok((await stat(part)).size > 0);
-    const file = await downloadModel("test.en", { dir, baseUrl: normal.url, models: model() });
-    assert.deepEqual(await readFile(file), DATA);
+    const dir = await downloadModel({ root, baseUrl: normal.url, model: model() });
+    assert.deepEqual(await readFile(path.join(dir, "encoder.onnx")), DATA);
     await assert.rejects(stat(part), /ENOENT/);
   } finally {
     for (const res of held) res.destroy();
     stalled.server.closeAllConnections?.();
     await stalled.close();
     await normal.close();
-    await rm(dir, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
 test("a wrong checksum deletes the .part and throws", async () => {
-  const dir = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
-  const { url, close } = await serve((req, res) => sendRange(req, res, DATA));
+  const root = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
+  const { url, close } = await serve((req, res) => sendRange(req, res, bytesFor(req)));
   try {
-    const bad = model({ sha256: "0".repeat(64) });
-    await assert.rejects(downloadModel("test.en", { dir, baseUrl: url, models: bad }), {
+    await assert.rejects(downloadModel({ root, baseUrl: url, model: model({ sha256: "0".repeat(64) }) }), {
       message: "The speech model download was corrupted. Try again.",
     });
-    await assert.rejects(stat(path.join(dir, "ggml-test.en.bin.part")), /ENOENT/);
-    await assert.rejects(stat(path.join(dir, "ggml-test.en.bin")), /ENOENT/);
+    await assert.rejects(stat(path.join(root, "test-model", "encoder.onnx.part")), /ENOENT/);
+    await assert.rejects(stat(path.join(root, "test-model", "encoder.onnx")), /ENOENT/);
   } finally {
     await close();
-    await rm(dir, { recursive: true, force: true });
+    await rm(root, { recursive: true, force: true });
   }
 });
 
-test("findModel needs the exact size and checks folders in order", async () => {
+test("files copied in by hand are accepted after their checksum; a changed file is caught and removed", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
-  const first = path.join(root, "first");
-  const second = path.join(root, "second");
-  const third = path.join(root, "third");
-  const models = model();
-  const file = models["test.en"].file;
+  const dir = path.join(root, "test-model");
   try {
-    await Promise.all([mkdir(first), mkdir(second), mkdir(third)]);
-    await writeFile(path.join(first, file), Buffer.alloc(DATA.length - 1));
-    await writeFile(path.join(second, file), Buffer.alloc(DATA.length + 1));
-    assert.equal(findModel("test.en", { dirs: [first, second], models }), null);
-    await writeFile(path.join(third, file), DATA);
-    assert.equal(findModel("test.en", { dirs: [first, second, third], models }), path.join(third, file));
-    await writeFile(path.join(second, file), DATA);
-    assert.equal(findModel("test.en", { dirs: [first, second, third], models }), path.join(second, file));
-    assert.equal(findModel("missing", { dirs: [first, second, third], models }), null);
+    assert.equal(modelPresent(root, model()), false);
+    await mkdir(dir);
+    await writeFile(path.join(dir, "encoder.onnx"), DATA);
+    await writeFile(path.join(dir, "tokens.txt"), SMALL);
+    assert.equal(modelPresent(root, model()), true);
+    assert.deepEqual(await verifyModel(root, model()), []);
+    assert.ok(JSON.parse(await readFile(path.join(dir, ".verified.json"), "utf8"))["encoder.onnx"]);
+    // Same size, other bytes: the size check passes, the checksum doesn't.
+    await writeFile(path.join(dir, "encoder.onnx"), Buffer.alloc(DATA.length, 9));
+    assert.deepEqual(await verifyModel(root, model()), ["encoder.onnx"]);
+    await assert.rejects(stat(path.join(dir, "encoder.onnx")), /ENOENT/);
+    // Nothing downloaded again for the file that's fine.
+    const asked = [];
+    const { url, close } = await serve((req, res) => (asked.push(path.basename(req.url)), sendRange(req, res, bytesFor(req))));
+    try {
+      await downloadModel({ root, baseUrl: url, model: model() });
+    } finally {
+      await close();
+    }
+    assert.deepEqual(asked, ["encoder.onnx"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
-test("the shipped models keep their expected names and sizes", () => {
-  assert.deepEqual(Object.keys(MODELS), ["small.en", "base.en"]);
-  assert.equal(MODELS["small.en"].file, "ggml-small.en.bin");
-  assert.equal(MODELS["small.en"].size, 487614201);
-  assert.equal(MODELS["base.en"].file, "ggml-base.en.bin");
-  assert.equal(MODELS["base.en"].size, 147964211);
+test("old speech models (whisper.cpp, WhisperKit) are removed from the models folder, and nothing else", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "glance-models-"));
+  try {
+    await writeFile(path.join(root, "ggml-small.en.bin"), Buffer.alloc(3000));
+    await writeFile(path.join(root, "ggml-base.en.bin"), Buffer.alloc(2000));
+    await writeFile(path.join(root, "ggml-large-v3-turbo-q5_0.bin.part"), Buffer.alloc(500));
+    await mkdir(path.join(root, "whisperkit", "models", "openai"), { recursive: true });
+    await writeFile(path.join(root, "whisperkit", "models", "openai", "weights.bin"), Buffer.alloc(1000));
+    await mkdir(path.join(root, MODEL.dir));
+    await writeFile(path.join(root, MODEL.dir, "tokens.txt"), "keep");
+    await writeFile(path.join(root, "notes.bin"), "keep");
+    const { removed, bytes } = removeOldModels(root);
+    assert.deepEqual(removed.sort(), ["ggml-base.en.bin", "ggml-large-v3-turbo-q5_0.bin.part", "ggml-small.en.bin", "whisperkit"]);
+    assert.equal(bytes, 6500);
+    assert.equal(await readFile(path.join(root, MODEL.dir, "tokens.txt"), "utf8"), "keep");
+    assert.equal(await readFile(path.join(root, "notes.bin"), "utf8"), "keep");
+    assert.deepEqual(removeOldModels(root), { removed: [], bytes: 0 });
+    assert.deepEqual(removeOldModels(path.join(root, "missing")), { removed: [], bytes: 0 });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("the model is Parakeet TDT 0.6B v2 (int8): four files, about 660 MB", () => {
+  assert.equal(MODEL.dir, "parakeet-tdt-0.6b-v2-int8");
+  assert.deepEqual(MODEL.files.map((f) => [f.name, f.size]), [
+    ["encoder.int8.onnx", 652184296],
+    ["decoder.int8.onnx", 7257753],
+    ["joiner.int8.onnx", 1739080],
+    ["tokens.txt", 9384],
+  ]);
+  assert.ok(MODEL.files.every((f) => /^[0-9a-f]{64}$/.test(f.sha256)));
+  assert.equal(Math.round(modelSize() / 10_000_000) * 10, 660);
 });
