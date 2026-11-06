@@ -289,3 +289,95 @@ test("OpenAI-compatible Depth: falls back none -> minimal -> low -> no parameter
     t.close();
   }
 });
+
+// A chat server that streams when asked to, and otherwise answers with JSON
+// usage the way OpenRouter reports a cache write.
+async function mockOpenRouter() {
+  const bodies = [];
+  const server = http.createServer((req, res) => {
+    let b = "";
+    req.on("data", (c) => (b += c));
+    req.on("end", () => {
+      const body = JSON.parse(b);
+      bodies.push(body);
+      if (body.stream) {
+        res.writeHead(200, { "content-type": "text/event-stream" });
+        return res.end(`data: ${JSON.stringify({ choices: [{ delta: { content: "ok" }, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ choices: [{ message: { content: "." }, finish_reason: "length" }], usage: { prompt_tokens: 900, completion_tokens: 1, prompt_tokens_details: { cached_tokens: 0, cache_write_tokens: 880 } } }));
+    });
+  });
+  await new Promise((r) => server.listen(0, "127.0.0.1", r));
+  const port = server.address().port;
+  return { openRouter: `http://127.0.0.1:${port}/openrouter.ai/api/v1`, other: `http://127.0.0.1:${port}/v1`, bodies, close: () => server.close() };
+}
+// Claude keeps the cache an hour (as on Anthropic's own API); Gemini 5 minutes.
+const CACHED_SYSTEM = [{ type: "text", text: "the prompt", cache_control: { type: "ephemeral", ttl: "1h" } }];
+const GEMINI_SYSTEM = [{ type: "text", text: "the prompt", cache_control: { type: "ephemeral" } }];
+const streamModel = (p, model) => p.stream({ model, system: "the prompt", parts: [{ type: "text", text: "hi" }], maxTokens: 50, effort: "low", onText() {} }).done;
+
+test("OpenRouter caching: Claude and Gemini models send the system message with a cache_control breakpoint", async () => {
+  const s = await mockOpenRouter();
+  try {
+    const p = createProvider({ provider: "openai", apiKey: "k", baseUrl: s.openRouter, model: "m" });
+    await streamModel(p, "anthropic/claude-sonnet-5.5");
+    await streamModel(p, "~anthropic/claude-haiku-latest");
+    await streamModel(p, "google/gemini-3-pro");
+    assert.deepEqual(s.bodies[0].messages[0], { role: "system", content: CACHED_SYSTEM });
+    assert.deepEqual(s.bodies[1].messages[0], { role: "system", content: CACHED_SYSTEM });
+    assert.deepEqual(s.bodies[2].messages[0], { role: "system", content: GEMINI_SYSTEM });
+    assert.deepEqual(s.bodies[0].messages[1], { role: "user", content: [{ type: "text", text: "hi" }] });
+  } finally {
+    s.close();
+  }
+});
+
+test("OpenRouter caching: other models, and any model on another server, send a plain string", async () => {
+  const s = await mockOpenRouter();
+  try {
+    const or = createProvider({ provider: "openai", apiKey: "k", baseUrl: s.openRouter, model: "m" });
+    await streamModel(or, "openai/gpt-5.1");
+    await streamModel(or, "deepseek/deepseek-chat");
+    const other = createProvider({ provider: "openai", apiKey: "k", baseUrl: s.other, model: "m" });
+    await streamModel(other, "anthropic/claude-sonnet-5.5");
+    await streamModel(other, "google/gemini-3-pro");
+    for (const b of s.bodies) assert.deepEqual(b.messages[0], { role: "system", content: "the prompt" });
+  } finally {
+    s.close();
+  }
+});
+
+test("OpenRouter caching: prewarm sends max_tokens 1, not streamed, with the same system message", async () => {
+  const s = await mockOpenRouter();
+  try {
+    const p = createProvider({ provider: "openai", apiKey: "k", baseUrl: s.openRouter, model: "anthropic/claude-sonnet-5.5" });
+    const u = await p.prewarm({ model: "anthropic/claude-sonnet-5.5", system: "the prompt", effort: "low" });
+    assert.deepEqual(u, { input: 900, output: 1, cacheRead: 0, cacheWrite: 880 });
+    const warm = s.bodies[0];
+    assert.equal(warm.max_tokens, 1);
+    assert.ok(!("stream" in warm));
+    assert.equal(warm.model, "anthropic/claude-sonnet-5.5");
+    assert.deepEqual(warm.messages, [{ role: "system", content: CACHED_SYSTEM }, { role: "user", content: "." }]);
+    await streamModel(p, "anthropic/claude-sonnet-5.5");
+    assert.equal(JSON.stringify(s.bodies[1].messages[0]), JSON.stringify(warm.messages[0]));
+    // The default model is used when none is given.
+    await p.prewarm({ system: "the prompt", effort: "low" });
+    assert.equal(s.bodies[2].model, "anthropic/claude-sonnet-5.5");
+  } finally {
+    s.close();
+  }
+});
+
+test("OpenRouter caching: prewarm is a no-op where nothing needs a breakpoint", async () => {
+  const s = await mockOpenRouter();
+  try {
+    const or = createProvider({ provider: "openai", apiKey: "k", baseUrl: s.openRouter, model: "m" });
+    assert.equal(await or.prewarm({ model: "openai/gpt-5.1", system: "s", effort: "low" }), null);
+    const other = createProvider({ provider: "openai", apiKey: "k", baseUrl: s.other, model: "m" });
+    assert.equal(await other.prewarm({ model: "anthropic/claude-sonnet-5.5", system: "s", effort: "low" }), null);
+    assert.equal(s.bodies.length, 0);
+  } finally {
+    s.close();
+  }
+});

@@ -82,3 +82,46 @@ const SCREEN_REF = /\b(?:on (?:the |your |my )?screen|(?:this|that|the) (?:code|
 function mentionsScreen(text) {
   return SCREEN_REF.test(text || "");
 }
+
+// A heard question that needs real thinking: system design, writing code, an
+// algorithm or its complexity, optimizing, an estimate, scale, trade-offs,
+// debugging, edge cases, a proof. These answer at the Depth setting; other
+// heard questions ("tell me about yourself") answer at Quick.
+const HARD_RULES = [
+  // Design or architect a system.
+  /\bsystem design\b/i,
+  /\b(?:design|architect)(?:ing)?\s+(?:a|an|the|our|your|this|that|me|us|it)\b/i,
+  /\bhow (?:would|do|will|could|should) (?:you|we|i) (?:design|architect|build|structure|model)\b/i,
+  // Implement, write or code a function, query, program or algorithm.
+  /\bimplement(?:ing)?\s+(?:a|an|the|this|that|it)\b/i,
+  /\b(?:write|implement|code|coding|code up)\b.{0,40}?\b(?:function|method|class|query|queries|sql|program|script|algorithm|solution|regex|code)\b/i,
+  // Algorithms, complexity, Big-O.
+  /\balgorithms?\b/i,
+  /\b(?:time|space|runtime|computational) complexity\b/i,
+  /\bbig[- ]?o\b/i,
+  /\bo\(\s*(?:1|n|log|n\s*log)/i,
+  // Optimize.
+  /\boptimi[sz](?:e|es|ed|ing|ation)\b/i,
+  // Calculate or estimate; how many / how much of something countable.
+  /\b(?:calculate|compute|estimate|estimation|back[- ]of[- ](?:the[- ])?envelope)\b/i,
+  /\bhow (?:many|much)\b.{0,60}?\b(?:servers?|machines?|nodes?|instances?|hosts?|storage|memory|ram|disk|bandwidth|traffic|requests?|qps|rps|capacity|throughput|bytes|[kmgtp]b|gigabytes?|terabytes?|petabytes?|data|shards?|replicas?|connections?|cpus?|cores?)\b/i,
+  // Scale to N users or requests.
+  /\bscal(?:e|ing)\s+(?:it\s+|this\s+|that\s+)?(?:up\s+)?to\b/i,
+  /\b(?:\d[\d,.]*\s*(?:k|m|b|million|billion|thousand)?|millions?|billions?|thousands?|hundreds? of thousands)(?:\s+of)?\s+(?:(?:concurrent|daily|monthly|active)\s+)*(?:users|requests|queries|transactions|events|messages|writes|reads|connections)\b/i,
+  /\b(?:qps|rps|requests per second|queries per second)\b/i,
+  // Trade-offs, debugging, edge cases, proofs.
+  /\btrade[- ]?offs?\b/i,
+  /\bdebug(?:s|ged|ging)?\b/i,
+  /\b(?:edge|corner) cases?\b/i,
+  /\b(?:prove|proof|derive|derivation)\b/i,
+];
+// Story questions ("Tell me about a time you debugged…") are answered from
+// experience, not worked out, so they stay quick even when a rule word appears.
+const STORY_QUESTION = /^(?:(?:so|and|okay|ok|alright|now)[,.]?\s+)*(?:tell me about|tell us about|describe|walk me through|talk me through|give me an example of|share an example of|can you (?:tell me about|describe|give me an example of|share)|have you ever)\s+(?:a|an|one|the)?\s*(?:time|situation|occasion|example|project|moment)\b/i;
+function isHardQuestion(text) {
+  const t = text || "";
+  // Only a story question's own sentence is exempt: "Tell me about a time you
+  // debugged prod. How would you design it now?" still has a hard part.
+  const sentences = t.split(/(?<=[.!?])\s+/);
+  return sentences.some((s) => !STORY_QUESTION.test(s.trim()) && HARD_RULES.some((rule) => rule.test(s)));
+}

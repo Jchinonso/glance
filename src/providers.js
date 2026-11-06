@@ -217,7 +217,7 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
   const root = String(baseUrl || "").replace(/\/+$/, "");
   const url = `${root}/chat/completions`;
   const headers = { "content-type": "application/json", ...(apiKey ? { authorization: `Bearer ${apiKey}` } : {}) };
-  const usage = (u = {}) => ({ input: u.prompt_tokens || 0, output: u.completion_tokens || 0, cacheRead: u.prompt_tokens_details?.cached_tokens || 0, cacheWrite: 0 });
+  const usage = (u = {}) => ({ input: u.prompt_tokens || 0, output: u.completion_tokens || 0, cacheRead: u.prompt_tokens_details?.cached_tokens || 0, cacheWrite: u.prompt_tokens_details?.cache_write_tokens || 0 });
   const stopOf = (reason) => (reason === "length" ? "max_tokens" : reason === "content_filter" ? "refusal" : "end");
   const send = async (body, signal) => {
     const res = await fetch(url, { method: "POST", headers, body: JSON.stringify(body), signal });
@@ -231,7 +231,15 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
     }
     return res;
   };
-  const messages = (system, content) => [{ role: "system", content: system }, { role: "user", content }];
+  const openRouter = /(^|[/.])openrouter\.ai([/:]|$)/i.test(root);
+  // OpenRouter caches OpenAI, DeepSeek and recent Gemini models by itself, but
+  // Claude models (and older Gemini) only up to a cache_control breakpoint, set
+  // here on the system message (résumé, job description, instructions).
+  const cacheable = (model) => openRouter && /^(?:anthropic\/|google\/gemini)/i.test(String(model || defaultModel).replace(/^~/, ""));
+  // Claude keeps it an hour, as on Anthropic's own API (pauses in an interview
+  // often run past 5 minutes); Gemini takes the plain 5-minute marker.
+  const cacheMark = (model) => (/^~?anthropic\//.test(String(model || defaultModel)) ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" });
+  const messages = (system, content, model) => [{ role: "system", content: cacheable(model) ? [{ type: "text", text: system, cache_control: cacheMark(model) }] : system }, { role: "user", content }];
   // Newer OpenAI models take max_completion_tokens instead of max_tokens, and
   // some servers (Groq, small local models) cap output below Glance's limit.
   // Learned from the first refusal and kept for the session; null = no limit sent.
@@ -252,7 +260,6 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
   // (models that don't reason). What worked is remembered per provider.
   // Quick: "none" (GPT-5.1 and later), then "minimal" (GPT-5), then "low".
   const LADDERS = { low: ["none", "minimal", "low"], medium: ["medium"], high: ["high"] };
-  const openRouter = /(^|[/.])openrouter\.ai([/:]|$)/i.test(root);
   const reasoningStep = {};
   const REASONING_ERROR = /reasoning|effort|minimal|unsupported (?:parameter|value)|unrecognized (?:request )?argument/i;
   const sendReasoned = async (body, effort, maxTokens, signal) => {
@@ -340,7 +347,7 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
       const controller = new AbortController();
       const content = parts.map((p) => (p.type === "image" ? { type: "image_url", image_url: { url: `data:image/jpeg;base64,${p.data}` } } : p));
       const done = (async () => {
-        const res = await sendReasoned({ model: model || defaultModel, stream: true, stream_options: { include_usage: true }, messages: messages(system, content) }, effort, maxTokens, controller.signal);
+        const res = await sendReasoned({ model: model || defaultModel, stream: true, stream_options: { include_usage: true }, messages: messages(system, content, model) }, effort, maxTokens, controller.signal);
         let out = "";
         let stop = "end";
         let used = usage();
@@ -384,14 +391,21 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
       return { done, abort: () => controller.abort() };
     },
     async complete({ model, system, user, maxTokens }) {
-      const res = await sendLimited({ model: model || defaultModel, messages: messages(system, user) }, maxTokens);
+      const res = await sendLimited({ model: model || defaultModel, messages: messages(system, user, model) }, maxTokens);
       const json = await res.json();
       const choice = json.choices?.[0];
       return { text: choice?.message?.content || "", usage: usage(json.usage), stop: stopOf(choice?.finish_reason), refusal: null };
     },
-    // No cache to warm on this API.
-    async prewarm() {
-      return null;
+    // Only OpenRouter's Claude and Gemini models have a cache to warm: the
+    // system message is the cached prefix, byte-identical to stream's. Others
+    // cache by themselves or not at all (null). Not streamed, and max_tokens 1
+    // since OpenRouter rejects 0. No reasoning level: thinking needs a budget
+    // above max_tokens, and the system prompt's cache doesn't depend on it.
+    async prewarm({ model, system } = {}) {
+      if (!cacheable(model)) return null;
+      const res = await sendLimited({ model: model || defaultModel, messages: messages(system, ".", model) }, 1);
+      const json = await res.json();
+      return usage(json.usage);
     },
     describeError: describe,
   };

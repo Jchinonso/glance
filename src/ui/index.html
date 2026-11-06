@@ -172,7 +172,7 @@
                 <ul class="combo-list model-row-list" id="settingsModelList" role="listbox" hidden></ul>
               </div>
               <div class="row" id="effortRow">
-                <div class="row-text"><span>Depth</span><small>Spoken questions always use Quick for speed. Depth applies to typed and screen questions; on OpenAI-compatible servers it is sent as the reasoning level (models that don't reason ignore it).</small></div>
+                <div class="row-text"><span>Depth</span><small>Spoken questions use Quick unless they look hard. Hard, typed and screen questions use Depth; on OpenAI-compatible servers it is sent as the reasoning level (models that don't reason ignore it).</small></div>
                 <div class="seg" id="effort" role="radiogroup">
                   <button role="radio" data-value="low">Quick</button>
                   <button role="radio" data-value="medium">Balanced</button>
@@ -447,6 +447,7 @@
         <article class="answer" id="answer" hidden>
           <div class="answer-head">
             <blockquote class="question" id="answerQ"></blockquote>
+            <button type="button" class="think-btn" id="thinkHarder" hidden><svg viewBox="0 0 20 20" aria-hidden="true"><path d="M10 2.5c.4 3.6 1.9 5.1 5.5 5.5-3.6.4-5.1 1.9-5.5 5.5-.4-3.6-1.9-5.1-5.5-5.5 3.6-.4 5.1-1.9 5.5-5.5Z" /><path d="M15.5 13c.2 1.5.8 2.1 2.3 2.3-1.5.2-2.1.8-2.3 2.3-.2-1.5-.8-2.1-2.3-2.3 1.5-.2 2.1-.8 2.3-2.3Z" /></svg><span>Think harder</span><kbd id="thinkHarderKeys"></kbd></button>
             <button type="button" class="textlink viewtoggle" id="viewToggle" hidden>Full answer</button>
             <button class="icon copy" id="copyBtn" title="Copy answer">
               <svg class="copy-icon" viewBox="0 0 20 20" aria-hidden="true"><rect x="7" y="7" width="9.5" height="9.5" rx="2" /><path d="M13 7V5a1.5 1.5 0 0 0-1.5-1.5h-6A1.5 1.5 0 0 0 4 5v6.5A1.5 1.5 0 0 0 5.5 13H7" /></svg>
@@ -456,7 +457,9 @@
           <div class="body" id="answerBody"></div>
           <div class="said" id="saidBox" hidden>
             <p class="said-text" id="saidText" hidden></p>
-            <button type="button" class="textlink" id="saidOpen">I said something else</button>
+            <div class="said-links">
+              <button type="button" class="textlink" id="saidOpen">I said something else</button>
+            </div>
             <form class="said-form" id="saidForm" hidden>
               <input id="saidInput" maxlength="1000" placeholder="What you said, in a few words (e.g. used the Kafka story)" autocomplete="off" />
               <button type="submit" class="ghost small">Save</button>

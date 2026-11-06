@@ -134,7 +134,7 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 
 **Transcription.** Under **Settings › General › Transcription**, **Accurate** (the default) uses small.en (488 MB): much better with technical terms, accents, noise and quiet speakers, and still faster than real time on Apple Silicon. **Fast** uses base.en (148 MB), about twice as quick per piece but makes more mistakes. It is downloaded only the first time Fast is picked; Accurate is used until it's ready. Accurate is recommended for interviews: a misheard question can't be answered well.
 
-**Depth.** **Settings › Answers › Depth** has three settings. **Quick** starts answers soonest and is recommended for live calls. **Balanced** and **Thorough** let the model think first, adding seconds before the first word. Spoken questions always answer at Quick whatever Depth is set to; Depth applies to typed questions and questions with a screenshot. On OpenAI-compatible servers Depth is sent as the reasoning level (`reasoning_effort`, or `reasoning.effort` on OpenRouter; Quick tries `minimal`, then `low`), and models that don't reason ignore it.
+**Depth.** **Settings › Answers › Depth** has three settings. **Quick** starts answers soonest and is recommended for live calls. **Balanced** and **Thorough** let the model think first, adding seconds before the first word. Spoken questions answer at Quick unless they look hard (designing a system, writing code, algorithms, complexity, estimates, scale, trade-offs, debugging, edge cases), which use Depth (story questions such as "tell me about a time you debugged…" stay at Quick) like typed questions and questions with a screenshot do. On a spoken answer given at Quick, the **Think harder** button at the top of the answer (or ⌘↵ with nothing new heard) answers the same question again with more thinking, at Balanced or above, and keeps the first answer. On OpenAI-compatible servers Depth is sent as the reasoning level (`reasoning_effort`, or `reasoning.effort` on OpenRouter; Quick tries `none`, then `minimal`, then `low`), and models that don't reason ignore it.
 
 ## AI providers
 
@@ -150,7 +150,7 @@ Models are listed from the provider itself: Anthropic's Models API, or the serve
 | OpenAI, Gemini, OpenRouter, Groq, Mistral… | Server address, model and API key | Tokens only |
 | Ollama or LM Studio (local) | Server address such as `http://localhost:11434/v1` and model; no key | Tokens only |
 
-On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. The prompt cache applies only to Anthropic, and Depth's thinking control is Anthropic-specific (OpenAI-compatible servers get it as a reasoning level). Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
+On Anthropic, Glance caches its instructions between questions (repeats cost a tenth), retries without the server-side refusal fallback if your account doesn't have it, and uses Opus to compress custom instructions. On OpenRouter, Claude models cache the résumé, job description and instructions for an hour the same way, and Gemini models for 5 minutes (other models there cache automatically). Depth's thinking control is Anthropic-specific (OpenAI-compatible servers get it as a reasoning level). Text-only models can't read screenshots; Glance says so and suggests turning screenshots off.
 
 ## Troubleshooting
 

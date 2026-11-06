@@ -629,8 +629,10 @@ async function captureScreen() {
 }
 
 // heard: the question came from the call transcript, so an automatic screenshot
-// would only add tokens.
-async function runAsk(question, { heard = false, heardAt = null } = {}) {
+// would only add tokens. hard: a heard question that needs thinking (design,
+// code, estimates…), answered at Depth. deep: Think harder, which thinks even
+// when Depth is Quick.
+async function runAsk(question, { heard = false, heardAt = null, hard = false, deep = false } = {}) {
   const startedAt = Date.now();
   if (current) current.abort();
   if (!canAsk()) {
@@ -672,10 +674,11 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
 
   let text = "";
   const model = currentModel();
-  const think = !heard || screenshots.length > 0;
-  // Spoken questions always answer at Quick; Depth applies to typed and screen questions.
-  const effort = think ? config.effort : "low";
-  log(`ask id=${id} heard=${heard} think=${think} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${effort} depth=${config.effort} screenshots=${screenshots.length}`);
+  const think = deep || !heard || screenshots.length > 0 || hard;
+  // Spoken questions answer at Quick unless they look hard; Depth applies to
+  // typed, screen and hard questions. Think harder goes at least to Balanced.
+  const effort = deep ? (config.effort === "low" ? "medium" : config.effort) : think ? config.effort : "low";
+  log(`ask id=${id} heard=${heard} hard=${hard} deep=${deep} think=${think} sinceSpeechEndMs=${heardAt ? Date.now() - heardAt : "n/a"} model=${model} effort=${effort} depth=${config.effort} screenshots=${screenshots.length}`);
   let firstToken = false;
   const job = ask({
     provider: llm,
@@ -708,14 +711,15 @@ async function runAsk(question, { heard = false, heardAt = null } = {}) {
     const u = result.usage;
     const cost = addUsage(u, model);
     log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=${u.output} cacheRead=${u.cacheRead} cacheWrite=${u.cacheWrite} aborted=false`);
-    send("answer-end", { id, error: problem, usage: { input: u.input + u.cacheRead + u.cacheWrite, output: u.output, cost, model: llm.name(model) } });
+    // quick: a heard question answered at Quick, which Think harder can redo.
+    send("answer-end", { id, error: problem, quick: heard && !think, usage: { input: u.input + u.cacheRead + u.cacheWrite, output: u.output, cost, model: llm.name(model) } });
   } catch (e) {
     const aborted = isAbort(e);
     if (!aborted) log("answer failed:", e);
     // A stopped answer still shows, so keep it for follow-ups and notes.
     if (aborted && text) answers.push({ id, question: q, context, answer: text, stopped: true });
     log(`answer end id=${id} totalMs=${Date.now() - startedAt} outputTokens=0 aborted=${aborted}`);
-    send("answer-end", { id, error: aborted ? null : describeError(llm, e, model), aborted });
+    send("answer-end", { id, error: aborted ? null : describeError(llm, e, model), aborted, quick: heard && !think });
   } finally {
     if (current?.id === id) current = null;
     broadcastState();
@@ -780,7 +784,8 @@ async function prewarmAnswers() {
       }),
       effort: "low", // what heard questions use, so the cache matches
     });
-    log(`prewarm ms=${Date.now() - startedAt} cacheWrite=${u?.cacheWrite || 0} cacheRead=${u?.cacheRead || 0}`);
+    if (u) log(`prewarm ms=${Date.now() - startedAt} cacheWrite=${u.cacheWrite || 0} cacheRead=${u.cacheRead || 0}`);
+    else log(`prewarm skipped model=${currentModel()} (this server caches by itself or not at all)`);
   } catch (e) {
     log("prewarm failed:", e);
   } finally {
@@ -1049,7 +1054,7 @@ ipcMain.handle("pause-shortcuts", (_e, paused) => {
 });
 
 ipcMain.handle("get-state", () => ({ ...state(), transcript: transcript.slice(-TRANSCRIPT_SYNC) }));
-ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard, heardAt: options?.heardAt ?? null }));
+ipcMain.handle("ask", (_e, question, options) => runAsk(question, { heard: !!options?.heard, heardAt: options?.heardAt ?? null, hard: !!options?.hard, deep: !!options?.deep }));
 // Reads a resume or job description file for the form to show; nothing is
 // saved until the user presses Save there.
 ipcMain.handle("import-doc", async (_e, kind) => {

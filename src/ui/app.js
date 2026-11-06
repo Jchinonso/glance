@@ -335,6 +335,7 @@ function renderStage() {
   const a = answers[page];
   if (a && !$("answer").hidden) {
     $("answer").classList.toggle("streaming", a.status === "streaming");
+    $("answer").classList.toggle("deep", !!a.deep);
     $("answerQ").textContent = a.question || "Help with what's on screen";
     const { text: body, keys } = splitKeys(a.text, { streaming: a.status === "streaming" });
     const compact = keys.length > 0 && answerView === "compact";
@@ -353,6 +354,13 @@ function renderStage() {
     const saidable = a.status === "done" && !a.error && state.style === "interview";
     $("saidBox").hidden = !saidable && !a.said;
     $("saidOpen").hidden = editingSaid;
+    // Think harder sits in the answer's header, so it's on screen without
+    // scrolling, with its shortcut (the Answer shortcut) shown on the button.
+    const askKeys = plainKeys(state.shortcuts?.ask || "");
+    $("thinkHarder").hidden = !canThinkHarder(a);
+    $("thinkHarderKeys").textContent = askKeys;
+    $("thinkHarderKeys").hidden = !askKeys;
+    $("thinkHarder").title = `This answer didn't stop to think. Answer the question again with more thinking${askKeys ? ` (${askKeys})` : ""}.`;
     $("saidOpen").textContent = a.said ? "Edit what you said" : "I said something else";
     $("saidText").hidden = !a.said || editingSaid;
     if (a.said) $("saidText").innerHTML = `You said: <strong>${escapeHtml(a.said)}</strong>. Follow-ups build on this.`;
@@ -509,6 +517,9 @@ async function submit({ form = false } = {}) {
     if (!form && last?.auto && last.status === "streaming") return;
     return g.cancel();
   }
+  // ⌘↵ with nothing new to answer, right after a spoken question answered at
+  // Quick: Think harder on it.
+  if (!typed && !form && !state.busy && !(state.listening && pendingQuestion) && canThinkHarder(answers.at(-1))) return thinkHarder(answers.at(-1));
   // Typed while an answer streams: send it now (the current answer stops and stays).
   autoAnswerPending = false;
   lastAutoQuestion = null;
@@ -530,7 +541,25 @@ async function submit({ form = false } = {}) {
   const heardAt = heard ? pendingQuestion.at : null;
   if (!state.listening) pendingQuestion = null; // Listen stopped during the wait
   view = "answers";
-  g.ask(typed || heard || "", { heard: !!heard && !mentionsScreen(heard), heardAt });
+  const spoken = !!heard && !mentionsScreen(heard);
+  g.ask(typed || heard || "", { heard: spoken, heardAt, hard: spoken && isHardQuestion(heard) });
+}
+
+// A finished answer to a spoken question that was answered at Quick (not
+// hard, not already Think harder): it can be answered again with more thinking.
+function canThinkHarder(a) {
+  return !!a && a.quick && a.status === "done" && !a.error && !a.stopped && !!a.question;
+}
+// Asks the same question again with more thinking, as a new answer; the
+// quick one stays.
+let deepPending = false;
+function thinkHarder(a) {
+  autoAnswerPending = false;
+  lastAutoQuestion = null;
+  view = "answers";
+  g.log?.(`think harder id=${a.id}`);
+  deepPending = true; // the next answer-start is this one: it says "Thinking it through…" while empty
+  g.ask(a.question, { heard: true, deep: true });
 }
 
 // Auto-answer (Interview mode, listening, Settings > Interview): once a
@@ -567,7 +596,8 @@ function watchForQuestion() {
     lastAutoQuestion = { ...pendingQuestion };
     view = "answers";
     autoAnswerPending = true;
-    g.ask(text, { heard: !mentionsScreen(text), heardAt });
+    const spoken = !mentionsScreen(text);
+    g.ask(text, { heard: spoken, heardAt, hard: spoken && isHardQuestion(text) });
   }, 100);
 }
 function stopWatching() {
@@ -645,7 +675,8 @@ g.on("submit", submit);
 g.on("snap-submit", snapSubmit);
 
 g.on("answer-start", ({ id, question }) => {
-  answers.push({ id, question, text: "", status: "streaming", auto: autoAnswerPending });
+  answers.push({ id, question, text: "", status: "streaming", auto: autoAnswerPending, deep: deepPending });
+  deepPending = false;
   autoAnswerId = autoAnswerPending ? id : null;
   autoAnswerPending = false;
   answerView = state.compactAnswers ? "compact" : "full";
@@ -675,7 +706,7 @@ g.on("answer-delta", ({ id, text }) => {
   // The answer grows below while you read it from the top; no scrolling.
   if (answers[page] === a) renderStage();
 });
-g.on("answer-end", ({ id, error, aborted, usage }) => {
+g.on("answer-end", ({ id, error, aborted, usage, quick }) => {
   const i = answers.findIndex((x) => x.id === id);
   if (i < 0) return;
   const a = answers[i];
@@ -687,6 +718,7 @@ g.on("answer-end", ({ id, error, aborted, usage }) => {
     a.error = error;
     a.usage = usage;
     a.stopped = !!aborted; // cut short: Stop, a new question, or a typed one
+    a.quick = !!quick; // a spoken question answered at Quick (see canThinkHarder)
   }
   renderStage();
 });
@@ -1137,6 +1169,10 @@ $("saidOpen").addEventListener("click", () => {
   $("saidInput").value = answers[page]?.said || "";
   renderStage();
   $("saidInput").focus();
+});
+$("thinkHarder").addEventListener("click", () => {
+  const a = answers[page];
+  if (canThinkHarder(a)) thinkHarder(a);
 });
 $("saidForm").addEventListener("submit", (e) => {
   e.preventDefault();

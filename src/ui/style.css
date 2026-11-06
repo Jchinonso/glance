@@ -453,6 +453,8 @@ body.onboarding .stage { max-height: 640px; }
   color: var(--dim);
   animation: breathe 1.4s ease-in-out infinite;
 }
+/* Think harder waits several seconds before the first word: say why. */
+.deep.streaming .body:empty::after { content: "Thinking it through…"; }
 @keyframes blink { 50% { opacity: 0; } }
 @keyframes breathe { 50% { opacity: 0.4; } }
 
@@ -784,13 +786,34 @@ body.needs-key #listenBtn, body.needs-key #shotBtn { display: none; }
 .modemenu button[aria-checked="true"]::before { content: "✓"; position: absolute; left: 9px; top: 7px; font-size: 12px; color: var(--ice); }
 
 /* Compact answers: the bold line plus key phrases to glance at while talking. */
+/* Think harder: a visible pill in the answer's header, next to Key points. */
+.think-btn {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 26px;
+  margin-top: -3px;
+  padding: 0 10px;
+  border: 1px solid color-mix(in srgb, var(--violet) 45%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--violet) 14%, transparent);
+  color: var(--violet);
+  font-size: 12px;
+  font-weight: 600;
+  white-space: nowrap;
+}
+.think-btn:hover { background: color-mix(in srgb, var(--violet) 24%, transparent); }
+.think-btn svg { width: 13px; height: 13px; fill: currentColor; stroke: none; }
+.think-btn kbd { font: inherit; font-size: 11px; font-weight: 500; opacity: 0.75; }
 .viewtoggle { flex: none; padding: 4px 8px; margin-top: -2px; font-size: 12px; font-weight: 600; color: var(--ice); }
 .body .keys { list-style: none; margin: 10px 0 14px; padding: 0; display: flex; flex-direction: column; gap: 6px; }
 .body .keys li { padding: 6px 12px; border-radius: 10px; background: var(--raise); font-size: 15px; line-height: 1.35; }
 
 /* What the user actually said, when it wasn't the suggestion. */
 .said { margin-top: 10px; display: flex; flex-direction: column; gap: 6px; }
-.said > .textlink { align-self: flex-start; padding: 2px 0; font-size: 12px; }
+.said-links { display: flex; align-items: center; gap: 14px; }
+.said-links .textlink { padding: 2px 0; font-size: 12px; }
 .said-text { margin: 0; color: var(--dim); font-size: 12.5px; }
 .said-text strong { color: var(--text); font-weight: 600; }
 .said-form { display: flex; gap: 6px; }

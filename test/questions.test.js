@@ -5,8 +5,8 @@ import vm from "node:vm";
 
 // questions.js is a browser script; run it in a sandbox to get its global.
 const ctx = vm.createContext({});
-vm.runInContext(`${readFileSync(new URL("../src/ui/questions.js", import.meta.url), "utf8")}\nthis.isQuestion = isQuestion; this.nextPendingQuestion = nextPendingQuestion; this.mentionsScreen = mentionsScreen;`, ctx);
-const { isQuestion, nextPendingQuestion, mentionsScreen } = ctx;
+vm.runInContext(`${readFileSync(new URL("../src/ui/questions.js", import.meta.url), "utf8")}\nthis.isQuestion = isQuestion; this.nextPendingQuestion = nextPendingQuestion; this.mentionsScreen = mentionsScreen; this.isHardQuestion = isHardQuestion;`, ctx);
+const { isQuestion, nextPendingQuestion, mentionsScreen, isHardQuestion } = ctx;
 
 test("detects questions with and without a question mark", () => {
   for (const q of [
@@ -172,4 +172,61 @@ test("pending question: pieces split by pauses read as one sentence", () => {
   assert.equal(nextPendingQuestion(null, line("them", "So to start, can you tell me a bit about yourself?", 6000, 3800), [line("them", "Hi, thanks for joining today.", 3000, 1500)]).text, "Hi, thanks for joining today. So to start, can you tell me a bit about yourself?");
   const greet = [line("them", "Great!", 2000, 1500)];
   assert.equal(nextPendingQuestion(null, line("them", "Can you tell me about yourself?", 5000, 3000), greet).text, "Great! Can you tell me about yourself?");
+});
+
+test("isHardQuestion: design, code, algorithms, estimates, scale and the like are hard", () => {
+  for (const q of [
+    "How would you design a URL shortener",
+    "Design a rate limiter for our API",
+    "Let's do some system design",
+    "Can you architect a notification service",
+    "Write a function that reverses a linked list",
+    "Implement an LRU cache",
+    "Could you write a SQL query to find the top customers",
+    "Code up a program that parses the log",
+    "Which algorithm would you use here",
+    "What's the time complexity of that",
+    "And the space complexity?",
+    "What's the Big-O of your approach",
+    "Can you do better than O(n squared)",
+    "How would you optimize it",
+    "Estimate the storage we need for five years",
+    "How many servers would you need",
+    "How much memory does that take",
+    "How would you scale it to 10 million users",
+    "It has to handle 50k requests per second",
+    "What are the trade-offs",
+    "Any tradeoffs between the two",
+    "How would you debug a memory leak",
+    "What edge cases would you test",
+    "Can you prove that it terminates",
+    "Derive the expected cost",
+  ]) assert.equal(isHardQuestion(q), true, q);
+});
+
+test("isHardQuestion: personal and behavioural questions are not", () => {
+  for (const q of [
+    "Why do you want this job",
+    "Tell me about yourself",
+    "What are your strengths",
+    "What's your biggest weakness",
+    "Where do you see yourself in five years",
+    "How many people were on your team",
+    "How much notice do you need to give",
+    "Tell me about a time you disagreed with your manager",
+    "What do you know about our company",
+    "Any questions for us",
+    "",
+  ]) assert.equal(isHardQuestion(q), false, q);
+  assert.equal(isHardQuestion(undefined), false);
+});
+
+test("isHardQuestion: story questions stay quick, but a hard follow-up in the same line counts", () => {
+  for (const q of [
+    "Tell me about a time you debugged a production issue.",
+    "Describe a situation where you had to optimize a slow query.",
+    "So tell me about a project where you designed the architecture.",
+    "Can you give me an example of a time you had to debug something under pressure?",
+  ]) assert.equal(isHardQuestion(q), false, q);
+  assert.equal(isHardQuestion("Tell me about a time you debugged prod. How would you design it now?"), true);
 });

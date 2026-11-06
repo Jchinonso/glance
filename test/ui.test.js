@@ -582,6 +582,77 @@ test("typing a question while Glance waits for a heard one sends the typed one i
   await run(`finishSpeaking(); stillHearing = async () => false; pendingQuestion = null;`);
 });
 
+// The last "ask id=" line in the app's log.
+const lastAskLog = () => readFileSync(path.join(dir, "logs", "glance.log"), "utf8").split("\n").filter((l) => / ask id=/.test(l)).at(-1) || "";
+const askedText = (r) => r.messages[1].content.at(-1).text;
+
+test("Think harder: shows on a quick spoken answer only, and re-asks the same question with more thinking", { skip }, async () => {
+  const now = Date.now() + 80000;
+  const count = await run(`return answers.length;`);
+  await run(`stillHearing = async () => false; pendingQuestion = null; lastAutoQuestion = null; state.listening = true; view = "answers"; onTranscript({ role: "them", text: "What do you enjoy most about your current role?", start: ${now}, at: ${now + 1500} });`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done"`, 5000);
+  assert.equal(await run(`return answers.at(-1).quick;`), true);
+  assert.ok(await shown("thinkHarder"), "shown on a quick spoken answer");
+  assert.equal(requests.at(-1).reasoning_effort, "none", "answered at Quick");
+  assert.match(lastAskLog(), /heard=true hard=false deep=false think=false/);
+
+  await click("#thinkHarder");
+  await until(`answers.length === ${count + 2} && answers.at(-1).status === "done"`);
+  assert.deepEqual(await run(`return answers.slice(-2).map((a) => [a.question, a.quick]);`), [
+    ["What do you enjoy most about your current role?", true],
+    ["What do you enjoy most about your current role?", false],
+  ]);
+  assert.match(askedText(requests.at(-1)), /Question: What do you enjoy most about your current role\?/);
+  assert.equal(requests.at(-1).reasoning_effort, "medium", "Think harder thinks even when Depth is Quick");
+  assert.match(lastAskLog(), /heard=true hard=false deep=true think=true .*effort=medium/);
+  assert.equal(await shown("thinkHarder"), false, "not on a Think harder answer");
+
+  // A hard spoken question answers at Depth: no Think harder.
+  await run(`state.listening = true; onTranscript({ role: "them", text: "How would you design a URL shortener?", start: ${now + 10000}, at: ${now + 11500} });`);
+  await until(`answers.length === ${count + 3} && answers.at(-1).status === "done"`, 5000);
+  assert.equal(await run(`return answers.at(-1).quick;`), false);
+  assert.equal(await shown("thinkHarder"), false, "not on a hard question");
+  assert.match(lastAskLog(), /heard=true hard=true deep=false think=true/);
+
+  // A typed question: no Think harder.
+  await run(`pendingQuestion = null; document.getElementById("question").value = "What is a mutex?"; document.getElementById("askForm").requestSubmit();`);
+  await until(`answers.length === ${count + 4} && answers.at(-1).status === "done"`);
+  assert.equal(await shown("thinkHarder"), false, "not on a typed question");
+  assert.match(lastAskLog(), /heard=false hard=false deep=false think=true/);
+});
+
+test("Think harder by ⌘↵: after a quick spoken answer it re-asks deeper; a new heard question still comes first", { skip }, async () => {
+  const now = Date.now() + 100000;
+  const count = await run(`return answers.length;`);
+  await run(`stillHearing = async () => false; pendingQuestion = null; lastAutoQuestion = null; state.listening = true; onTranscript({ role: "them", text: "Why are you leaving your current job?", start: ${now}, at: ${now + 1500} });`);
+  await until(`answers.length === ${count + 1} && answers.at(-1).status === "done" && answers.at(-1).quick`, 5000);
+  await run(`submit();`); // ⌘↵ with nothing typed
+  await until(`answers.length === ${count + 2} && answers.at(-1).status === "done"`);
+  assert.equal(await run(`return answers.at(-1).question;`), "Why are you leaving your current job?");
+  assert.equal(requests.at(-1).reasoning_effort, "medium");
+  assert.match(lastAskLog(), /deep=true/);
+
+  // The deeper answer isn't quick, so ⌘↵ does what it always did (asks with nothing typed).
+  await run(`state.listening = false; submit();`);
+  await until(`answers.length === ${count + 3} && answers.at(-1).status === "done"`);
+  assert.equal(await run(`return answers.at(-1).question;`), "");
+  assert.match(lastAskLog(), /heard=false hard=false deep=false/);
+
+  // After a quick answer, a new pending heard question is what ⌘↵ answers.
+  await run(`state.listening = true; onTranscript({ role: "them", text: "What motivates you at work?", start: ${now + 10000}, at: ${now + 11500} });`);
+  await until(`answers.length === ${count + 4} && answers.at(-1).status === "done" && answers.at(-1).quick`, 5000);
+  await run(`
+    state.autoAnswer = false; // so only ⌘↵ answers the next one
+    state.listening = true;
+    onTranscript({ role: "them", text: "Where do you see yourself in five years?", start: ${now + 20000}, at: ${now + 21500} });
+    submit();
+  `);
+  await until(`answers.length === ${count + 5} && answers.at(-1).status === "done"`);
+  assert.equal(await run(`return answers.at(-1).question;`), "Where do you see yourself in five years?");
+  assert.match(lastAskLog(), /heard=true hard=false deep=false/);
+  await run(`pendingQuestion = null; lastAutoQuestion = null;`);
+});
+
 test("stopping Listen drops an unanswered question, so it isn't shown or auto-answered later", { skip }, async () => {
   const now = Date.now() + 70000;
   await run(`
@@ -838,7 +909,7 @@ test("settings: the model hint shows known prices, and Depth hides for models wi
   assert.equal(await run(`return document.getElementById("effortRow").hidden;`), false);
   await run(`state.provider = "openai"; state.effortSupported = true; render();`);
   assert.equal(await run(`return document.getElementById("effortRow").hidden;`), false);
-  assert.match(await run(`return document.querySelector("#effortRow small").textContent;`), /Spoken questions always use Quick/);
+  assert.match(await run(`return document.querySelector("#effortRow small").textContent;`), /Spoken questions use Quick unless they look hard/);
   await run(`state.provider = "anthropic"; state.model = "claude-haiku-4-5"; state.effortSupported = false; render();`);
   assert.match(await run(`return document.getElementById("modelHint").textContent;`), /no prices/);
   assert.equal(await run(`return document.getElementById("effortRow").hidden;`), true);
