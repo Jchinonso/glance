@@ -160,27 +160,27 @@ Glance works with any model your provider lists, but for live calls three things
 
 On **Anthropic's own API**:
 
-| Interview | Model | Depth | Screenshot every question |
+| Interview | Model | Depth | Screenshots |
 | --- | --- | --- | --- |
-| Behavioral, HR or mixed | **Haiku 5.5** | Quick | Off |
-| Technical (coding, debugging, system design) | **Sonnet 5.5** | Balanced | On when the problem is on screen |
-| Hardest technical rounds | **Opus 5.5** | Balanced | On when the problem is on screen |
-| Lowest cost | **Haiku 5.5** | Quick | Off |
+| Behavioral, HR or mixed | **Haiku 5.5** | Quick | Rarely needed |
+| Technical (coding, debugging, system design) | **Sonnet 5.5** | Balanced | ⌘⇧2 when a problem is on screen |
+| Hardest technical rounds | **Opus 5.5** | Balanced | ⌘⇧2 when a problem is on screen |
+| Lowest cost | **Haiku 5.5** | Quick | Rarely needed |
 
 The same setups on **OpenRouter** (one key for many companies' models), with a cheaper alternative for each:
 
-| Interview | OpenRouter model | Cheaper alternative | Depth | Screenshot every question |
+| Interview | OpenRouter model | Cheaper alternative | Depth | Screenshots |
 | --- | --- | --- | --- | --- |
-| Behavioral, HR or mixed | `anthropic/claude-haiku-5.5` | `qwen/qwen3.7-flash` (untested) | Quick | Off |
-| Technical (coding, debugging, system design) | `anthropic/claude-sonnet-5.5` | `google/gemini-3.8-flash` | Balanced | On when the problem is on screen |
-| Hardest technical rounds | `anthropic/claude-opus-5.5` | `openai/gpt-5.4` (slower) | Balanced | On when the problem is on screen |
-| Lowest cost | `anthropic/claude-haiku-5.5` | `qwen/qwen3.7-flash` (untested) | Quick | Off |
+| Behavioral, HR or mixed | `anthropic/claude-haiku-5.5` | `qwen/qwen3.7-flash` (untested) | Quick | Rarely needed |
+| Technical (coding, debugging, system design) | `anthropic/claude-sonnet-5.5` | `google/gemini-3.8-flash` | Balanced | ⌘⇧2 when a problem is on screen |
+| Hardest technical rounds | `anthropic/claude-opus-5.5` | `openai/gpt-5.4` (slower) | Balanced | ⌘⇧2 when a problem is on screen |
+| Lowest cost | `anthropic/claude-haiku-5.5` | `qwen/qwen3.7-flash` (untested) | Quick | Rarely needed |
 
 To set up OpenRouter: in **Settings › Answers › AI provider** choose **OpenAI-compatible**, type `openrouter.ai` as the server address (Glance fills in `https://openrouter.ai/api/v1`), pick the model from the list, paste your OpenRouter key from [openrouter.ai/keys](https://openrouter.ai/keys), and press **Test connection**.
 
-For every interview, keep **Settings › General › Transcription** on **Accurate** and turn on **Interview mode** with auto-answer.
+For every interview, keep **Settings › General › Transcription** on **Accurate** and turn on **Interview mode** with auto-answer. In a coding or design round, press **Screenshot** (⌘⇧2) when the problem appears: the answer uses the screen and what was just said. A spoken question gets a screenshot by itself only when it mentions the screen ("look at this function"), and **Settings › Answers › Screenshot every question** only adds one to questions you type.
 
-**Anthropic or OpenRouter.** Both cache your résumé, job description and instructions and warm the cache when you press Listen (on OpenRouter for Claude models for an hour and Gemini models for 5 minutes; other models there cache automatically). For Claude models, Anthropic's own API (a key from [console.anthropic.com](https://console.anthropic.com)) is still the best fit: Glance controls thinking exactly, retries refused requests on another model, and shows costs in dollars. OpenRouter gives one key for hundreds of models from many companies, sends Depth as each model's reasoning level, and shows tokens rather than dollars.
+**Anthropic or OpenRouter.** Both cache your résumé, job description and instructions and warm the cache when you press Listen (on OpenRouter for Claude models for an hour and Gemini models for 5 minutes; other models there cache automatically). For Claude models, Anthropic's own API (a key from [console.anthropic.com](https://console.anthropic.com)) is still the best fit: Glance controls thinking exactly, retries a refused request on another model (Opus and Sonnet), and shows costs in dollars. OpenRouter gives one key for hundreds of models from many companies, sends Depth as each model's reasoning level, and shows tokens rather than dollars.
 
 On OpenRouter, pick a model that reads images if you use screenshots. Some good choices, with OpenRouter's prices in dollars per million tokens as of November 2026 (they change, so check openrouter.ai):
 
