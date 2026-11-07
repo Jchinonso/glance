@@ -500,6 +500,9 @@ function createWindow() {
   });
   win.setAlwaysOnTop(true, "screen-saver");
   win.setVisibleOnAllWorkspaces(true, { visibleOnFullScreen: true });
+  // hideWindow drops opacity to 0 for an instant hide; restore it whenever the
+  // window is shown again. Tests keep opacity 0 so they stay invisible.
+  if (!TEST_DIR) win.on("show", () => win.setOpacity(1));
   // Users set the width by dragging an edge; height follows the content.
   win.on("resized", () => {
     config.width = win.getSize()[0];
@@ -544,6 +547,8 @@ function showWindow() {
 // to bring it back.
 function hideWindow() {
   if (!win) return;
+  // macOS fades a hidden panel out over ~250 ms; at opacity 0 it's gone at once.
+  win.setOpacity(0);
   win.hide();
   if (!config.hideTipShown && Notification.isSupported()) {
     new Notification({ title: "Glance is hidden", body: `Click the Glance icon in the menu bar, or press ${formatAccel(shortcuts().toggleWindow)}, to bring it back.` }).show();

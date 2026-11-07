@@ -122,7 +122,7 @@ function renderStrip() {
   renderTimer();
   const cloak = $("cloakBtn");
   cloak.setAttribute("aria-pressed", String(!!state.invisible));
-  cloak.title = state.invisible ? "Hidden from screen sharing. Click to show it (⌘⇧H)." : "Visible in screen sharing. Click to hide it (⌘⇧H).";
+  cloak.setAttribute("aria-label", state.invisible ? "Hidden from screen sharing. Click to show it (⌘⇧H)." : "Visible in screen sharing. Click to hide it (⌘⇧H).");
   const last = heard.at(-1);
   $("caption").hidden = !state.listening;
   if (pendingQuestion && state.listening) {
