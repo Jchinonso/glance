@@ -61,12 +61,12 @@ The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated
 
 > **Glance downloads its speech model the first time it opens.** You need an internet connection for that first launch.
 
-- The DMG is about 100 MB (the speech engine is inside it; the model downloads separately).
+- The DMG is about 100 MB for Apple Silicon and about 115 MB for Intel (the speech engine is inside it; the model downloads separately).
 - **Setup downloads the speech model once: about 660 MB.** It's NVIDIA's Parakeet TDT 0.6B v2 (English, int8), from [Hugging Face](https://huggingface.co/csukuangfj/sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8), four files each checked against its SHA-256. It's a required step: **Continue** and **Skip setup** stay disabled until it finishes, a few minutes on a typical connection.
 - Downloads resume after a dropped connection and offer **Try again** if they keep failing.
 - People updating from an earlier version get the same speech step once, the next time Glance opens. When Parakeet is in, Glance deletes the speech models older versions downloaded (whisper.cpp's `ggml-*.bin` files and the `whisperkit` folder in its models folder) and logs how much space that freed, usually 0.6 to 1.2 GB.
 
-1. Download the latest **Glance-…-arm64.dmg** from [Releases](https://github.com/Jchinonso/glance/releases) (Apple Silicon Macs).
+1. Download the latest DMG for your Mac from [Releases](https://github.com/Jchinonso/glance/releases): **Glance-…-arm64.dmg** for Apple Silicon (M1 and later), **Glance-…-x64.dmg** for Intel. Not sure which you have? Open the Apple menu, then **About This Mac**: "Chip: Apple M…" means Apple Silicon, "Processor: Intel" means Intel.
 2. Open it and drag **Glance** onto **Applications**.
 3. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
 4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
@@ -75,7 +75,8 @@ Nothing else to install: the speech engine ([sherpa-onnx](https://github.com/k2-
 
 ## Requirements
 
-- A Mac with Apple Silicon (the build targets `darwin-arm64`).
+- macOS 14.2 (Sonoma) or later, which Glance needs to hear the call's audio.
+- Any Apple Silicon Mac, or an Intel Mac from 2018 or later (iMac 2019 or later; the 2017 iMac Pro also works). Intel Macs from 2017 and earlier can't run macOS 14, so they can't run Glance.
 - An internet connection on first launch, for the speech model (about 660 MB, once).
 - About 0.7 GB of disk space for the speech model.
 - To build from source: Node.js 20 or later. No Homebrew, CMake or Xcode needed: the speech engine comes prebuilt from npm.
@@ -144,7 +145,7 @@ The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**).
 Glance has one speech engine and one model: NVIDIA's [Parakeet TDT 0.6B v2](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2) (English, int8), run by [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx) on your Mac's CPU. There is nothing to choose: **Settings › General › Speech** reads "Parakeet (on this Mac)", with the download's progress or **Try again** below it when that's needed.
 
 - **Speed, measured on an M1:** about 0.5 to 0.8 s per 7.5 s phrase, about 0.15 s for a short "Sure.", and about 2 s to load the model, which happens when Glance opens so the first Listen is instant. Newer chips are faster.
-- **Same on every Apple Silicon Mac.** It uses neither the GPU nor the Neural Engine, so there's no per-chip preparation and no GPU code to fail.
+- **Same on every Mac.** It uses neither the GPU nor the Neural Engine, so there's no per-chip preparation and no GPU code to fail. Intel Macs run the same engine on the CPU and are slower than the M1 figures above.
 - **In its own process.** The engine runs outside Glance's main process, so the window never stalls while a phrase is transcribed, and if the engine ever stops, Glance restarts it for the next phrase.
 - **Words to recognize.** Names and terms in **Settings › General › Words to recognize** are boosted strongly, while a built-in list of common tech terms (React, Postgres, Kubernetes and so on) gets only a light boost, so everyday words like "job" aren't turned into "Java". A word the model can't spell with its own pieces (an emoji, say) is left out and logged.
 - **Open source:** sherpa-onnx is Apache-2.0; the Parakeet model is CC-BY-4.0, by NVIDIA ([model card](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v2)), converted to ONNX by the sherpa-onnx authors.
@@ -389,7 +390,7 @@ Mac audio ──► speech detection ──► Parakeet (sherpa-onnx, CPU) ─�
 
 - `src/main.js`: window, shortcuts, screenshots, keychain, settings, notes, logging, the test mode.
 - `src/audio.js`: system audio capture (audiotee) and speech detection; each phrase goes to the speech engine in turn.
-- `src/asr.js` and `src/asr-worker.js`: the speech engine. Parakeet through sherpa-onnx (`sherpa-onnx-node`, prebuilt for Apple Silicon) in an Electron utility process, loaded once and kept loaded, restarted if it stops.
+- `src/asr.js` and `src/asr-worker.js`: the speech engine. Parakeet through sherpa-onnx (`sherpa-onnx-node`, prebuilt for Apple Silicon and Intel) in an Electron utility process, loaded once and kept loaded, restarted if it stops.
 - `src/hotwords.js`: Words to recognize, turned into the exact pieces the model writes (its own BPE), checked so a phrase is either boosted correctly or left out.
 - `src/models.js`: the model download (four files, resumed, checked against SHA-256) and removing older versions' speech models.
 - `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
@@ -412,7 +413,7 @@ npm start   # opens dist/Glance-darwin-arm64/Glance.app
 npm run dmg
 ```
 
-`npm run dev` and the packaged app both download the speech model into `~/Library/Application Support/Glance/models` on first launch. Nothing model-related is packed into the app. The DMG is LZMA-compressed and takes about 4 minutes to build.
+`npm run dev` and the packaged app both download the speech model into `~/Library/Application Support/Glance/models` on first launch. Nothing model-related is packed into the app. The DMG is LZMA-compressed and takes about 4 minutes to build. These scripts build the Apple Silicon app; the Intel DMG on the Releases page is packaged separately with `--arch=x64` and the `sherpa-onnx-darwin-x64` package in place of `sherpa-onnx-darwin-arm64`.
 
 `npm run dev` runs from source, but macOS won't grant it screen recording, so screenshots only work in the packaged app. Quit Glance before running `npm run package` again.
 
