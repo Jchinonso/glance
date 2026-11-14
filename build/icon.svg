@@ -1,0 +1,32 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a3a52"/>
+      <stop offset="1" stop-color="#0b1119"/>
+    </linearGradient>
+    <linearGradient id="lid" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8fd3ff"/>
+      <stop offset="1" stop-color="#b9a3ff"/>
+    </linearGradient>
+    <linearGradient id="iris" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#9af0d3"/>
+      <stop offset="1" stop-color="#8fd3ff"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.62" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#8fd3ff" stop-opacity="0.2"/>
+      <stop offset="0.6" stop-color="#8fd3ff" stop-opacity="0.06"/>
+      <stop offset="1" stop-color="#8fd3ff" stop-opacity="0"/>
+    </radialGradient>
+    <filter id="shadow" x="-10%" y="-10%" width="120%" height="124%">
+      <feDropShadow dx="0" dy="14" stdDeviation="16" flood-color="#000" flood-opacity="0.32"/>
+    </filter>
+  </defs>
+  <!-- macOS icon grid: an 824px rounded square on a 1024px canvas. -->
+  <rect x="100" y="100" width="824" height="824" rx="186" fill="url(#bg)" filter="url(#shadow)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="184.5" fill="none" stroke="#ffffff" stroke-opacity="0.13" stroke-width="3"/>
+  <circle cx="574" cy="512" r="330" fill="url(#glow)"/>
+  <!-- An eye glancing to the side: the iris sits right of centre. -->
+  <path d="M236 512C340 338 684 338 788 512C684 686 340 686 236 512Z" fill="none" stroke="url(#lid)" stroke-width="46" stroke-linejoin="round"/>
+  <circle cx="574" cy="512" r="98" fill="url(#iris)"/>
+  <circle cx="606" cy="480" r="27" fill="#ffffff" fill-opacity="0.92"/>
+</svg>

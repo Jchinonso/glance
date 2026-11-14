@@ -21,6 +21,8 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // The fake model: streams a fixed interview-style answer and records requests.
 const ANSWER = "**I led our billing migration to Postgres.**\nKeys: billing migration · 40% fewer errors · staged rollout\n\nAt Acme Pay our invoices drifted out of sync, so I moved billing into Postgres transactions.\n\nWe ran both systems side by side and errors fell 40%.\n\n*Added: the side-by-side run. Check it fits.*";
 const requests = [];
+// What the fake GitHub says the latest release is (Settings > About).
+let latestRelease = { tag_name: "v1.0.0", assets: [] };
 let server;
 let modelUrl;
 
@@ -64,6 +66,10 @@ before(async () => {
     let body = "";
     req.on("data", (c) => (body += c));
     req.on("end", async () => {
+      if (req.url === "/releases/latest") {
+        res.writeHead(200, { "content-type": "application/json" });
+        return res.end(JSON.stringify(latestRelease));
+      }
       const request = JSON.parse(body || "{}");
       requests.push(request);
       // Model listing for the provider form.
@@ -122,7 +128,7 @@ before(async () => {
   });
   const port = 9400 + Math.floor(Math.random() * 500);
   app = spawn(electronPath, [root, `--remote-debugging-port=${port}`], {
-    env: { ...process.env, GLANCE_TEST_DIR: dir, GLANCE_MODELS_URL: "http://127.0.0.1:9", GLANCE_TEST_MODEL_FILES: JSON.stringify(files), GLANCE_TEST_ASR: path.join(root, "test", "fixtures", "fake-asr.mjs") },
+    env: { ...process.env, GLANCE_TEST_DIR: dir, GLANCE_MODELS_URL: "http://127.0.0.1:9", GLANCE_TEST_MODEL_FILES: JSON.stringify(files), GLANCE_TEST_ASR: path.join(root, "test", "fixtures", "fake-asr.mjs"), GLANCE_TEST_VERSION: "1.0.0", GLANCE_UPDATE_URL: `${modelUrl.replace(/\/v1$/, "")}/releases/latest` },
     stdio: "ignore",
   });
   let page;
@@ -976,7 +982,7 @@ test("provider form: changing the address renames the model even when the list c
 test("provider form: no key yet is a hint, not an error, except for a local server", { skip }, async () => {
   await run(`await g.setSetting("provider", "openai");`);
   await until(`state.provider === "openai"`);
-  await run(`listModels = async () => ({ error: "api.openai.com rejected the API key. Check it in Settings > Answers > AI provider." });
+  await run(`listModels = async () => ({ error: "api.openai.com rejected the API key. Check it in Settings > AI Model > AI provider." });
     setMenu(true); document.querySelector('#settingsTabs [data-tab="answers"]').click();`);
   await click("#keyBtn");
   const status = async (url, keyHint) => {
@@ -991,7 +997,7 @@ test("provider form: no key yet is a hint, not an error, except for a local serv
   assert.equal(cls, "model-status error");
   assert.match(text, /^api\.openai\.com rejected the API key\. Retry$/);
   // A local server needs no key, so its error shows even without one.
-  await run(`listModels = async () => ({ error: "Can't reach localhost:11434. Check the base URL in Settings > Answers > AI provider, and your connection." });`);
+  await run(`listModels = async () => ({ error: "Can't reach localhost:11434. Check the base URL in Settings > AI Model > AI provider, and your connection." });`);
   const [localCls, localText] = await status("http://localhost:11434/v1", null);
   assert.equal(localCls, "model-status error");
   assert.match(localText, /Can't reach localhost:11434\. Check the server address and your connection\./);
@@ -1104,6 +1110,60 @@ test("settings: the model dropdown lists state.modelOptions and saves the choice
   await until(`document.getElementById("refreshModelsBtn").textContent === "1 model"`);
   await run(`listModels = (p) => g.listModels(p); await g.setSetting("openaiModel", "fake"); setMenu(false);`);
   await until(`state.openaiModel === "fake"`);
+});
+
+test("update bar: shows a newer version, progress, and hides on Later and during a call", { skip }, async () => {
+  const bar = (u, extra = "") => run(`state.update = ${JSON.stringify(u)}; ${extra} render(); return $("updateBar").hidden ? "" : $("updateText").textContent.replace(/ Save notes first.*$/, "") + "|" + $("updateBtn").hidden + "|" + $("updateBtn").textContent;`);
+  assert.equal(await bar({ status: "none" }), "");
+  assert.equal(await bar({ status: "available", version: "9.9.9" }), "Glance 9.9.9 is available.|false|Update");
+  assert.equal(await bar({ status: "available", version: "9.9.9" }, "state.listening = true;"), "", "not during a call");
+  assert.equal(await bar({ status: "downloading", version: "9.9.9", received: 25, total: 100 }, "state.listening = false;"), "Downloading Glance 9.9.9: 25%|true|Update");
+  assert.equal(await bar({ status: "error", version: "9.9.9", error: "The update download was corrupted. Try again." }), "The update download was corrupted. Try again.|false|Try again");
+  // With a session under way, the bar says updating will clear it.
+  const count = await run(`return state.transcriptCount;`);
+  assert.match(await run(`state.update = { status: "available", version: "9.9.9" }; state.transcriptCount = 3; render(); return $("updateText").textContent;`), /^Glance 9\.9\.9 is available\. Save notes first: updating restarts Glance and clears this session\.$/);
+  await run(`state.transcriptCount = ${count}; render();`);
+  await bar({ status: "available", version: "9.9.9" });
+  await click("#updateLater");
+  assert.equal(await shown("updateBar"), false, "Later hides it");
+  assert.equal(await bar({ status: "available", version: "9.9.10" }), "Glance 9.9.10 is available.|false|Update", "a newer one shows again");
+  await bar({ status: "none" });
+});
+
+test("Settings tabs are named for what they hold; About shows the version and checks for updates", { skip }, async () => {
+  await run(`if ($("menu").hidden) $("menuBtn").click();`);
+  assert.deepEqual(await run(`return [...document.querySelectorAll("#settingsTabs button")].map((b) => b.textContent);`), ["AI Model", "Interview", "Session", "General", "About"]);
+  await click('#settingsTabs [data-tab="about"]');
+  assert.match(await run(`return $("aboutVersion").textContent;`), /^Version 1\.0\.0 · (Apple Silicon|Intel)$/);
+  assert.equal(await run(`return $("updateCheckTitle").textContent;`), "Check for updates");
+  await click("#updateCheckBtn");
+  await until(`$("updateCheckMeta").textContent === "You have the latest version."`);
+  assert.equal(await shown("updateBar"), false);
+  // The answer clears when the tab changes, so it never reads as current days later.
+  await click('#settingsTabs [data-tab="general"]');
+  await click('#settingsTabs [data-tab="about"]');
+  assert.match(await run(`return $("updateCheckMeta").textContent;`), /checks by itself/);
+  latestRelease = { tag_name: "v9.9.9", assets: [{ name: `Glance-9.9.9-${process.arch}.dmg`, size: 10, digest: `sha256:${"a".repeat(64)}`, browser_download_url: "http://127.0.0.1:9/Glance.dmg" }] };
+  await click("#updateCheckBtn");
+  await until(`$("updateCheckTitle").textContent === "Update to Glance 9.9.9"`);
+  assert.match(await run(`return $("updateCheckMeta").textContent;`), /^Downloads it, installs it and reopens Glance\./);
+  assert.match(await run(`return $("updateBar").hidden ? "" : $("updateText").textContent;`), /^Glance 9\.9\.9 is available\./);
+  await click("#updateLater");
+  assert.equal(await shown("updateBar"), false);
+  assert.equal(await run(`return $("updateCheckTitle").textContent;`), "Update to Glance 9.9.9", "still offered in About after Later");
+  // While it downloads, the row shows progress and can't be pressed twice.
+  assert.equal(await run(`state.update = { status: "downloading", version: "9.9.9", received: 50, total: 100 }; render(); return $("updateCheckMeta").textContent + "|" + $("updateCheckBtn").disabled;`), "Downloading Glance 9.9.9: 50%|true");
+  await run(`state.update = { status: "available", version: "9.9.9" }; render();`);
+  await click('#settingsTabs [data-tab="answers"]');
+  await click("#menuBtn");
+});
+
+test("the top bar's X asks before quitting during a call", { skip }, async () => {
+  await run(`state.listening = true; render();`);
+  await click("#quitTopBtn");
+  assert.match(await run(`return $("notice").hidden ? "" : $("notice").textContent;`), /listening to your call\. Click the X again to quit/);
+  assert.equal(await run(`return $("quitTopBtn").classList.contains("armed") + "|" + $("quitTopBtn").title;`), "true|Click again to quit Glance");
+  await run(`state.listening = false; render();`);
 });
 
 test("the no-sound warning offers settings and a reopen", { skip }, async () => {

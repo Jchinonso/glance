@@ -88,9 +88,9 @@ function anthropic({ apiKey, anthropicBaseUrl }) {
   const describe = (e, model) => {
     const name = label(model);
     const t = String(e?.message || e);
-    if (e instanceof Anthropic.AuthenticationError) return "Your API key was rejected. Check it in Settings > Answers > AI provider.";
+    if (e instanceof Anthropic.AuthenticationError) return "Your API key was rejected. Check it in Settings > AI Model > AI provider.";
     if (e instanceof Anthropic.PermissionDeniedError) return `This API key isn't allowed to use ${name}. Check its workspace permissions in the Anthropic console.`;
-    if (e instanceof Anthropic.NotFoundError) return `${name} isn't available to this API key's organization. Try another model in Settings > Answers.`;
+    if (e instanceof Anthropic.NotFoundError) return `${name} isn't available to this API key's organization. Try another model in Settings > AI Model.`;
     if (e instanceof Anthropic.RateLimitError) return "Too many requests right now. Wait a few seconds and ask again.";
     if (e?.status === 402 || /credit balance/i.test(t)) return "Your Anthropic account is out of credit. Add some at console.anthropic.com > Billing.";
     if (e?.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
@@ -284,16 +284,16 @@ function openaiCompatible({ apiKey, baseUrl, model: defaultModel }) {
         return baseUrl || "the server";
       }
     })();
-    if (e instanceof TypeError && /fetch|url/i.test(String(e.message))) return `Can't reach ${host}. Check the base URL in Settings > Answers > AI provider, and your connection.`;
-    if (e?.name === "AbortError" || e?.name === "TimeoutError") return `Timed out waiting for ${host}. Check the base URL in Settings > Answers > AI provider, and your connection.`;
+    if (e instanceof TypeError && /fetch|url/i.test(String(e.message))) return `Can't reach ${host}. Check the base URL in Settings > AI Model > AI provider, and your connection.`;
+    if (e?.name === "AbortError" || e?.name === "TimeoutError") return `Timed out waiting for ${host}. Check the base URL in Settings > AI Model > AI provider, and your connection.`;
     if (!(e instanceof HttpError)) return null;
-    if (e.status === 401) return `${host} rejected the API key. Check it in Settings > Answers > AI provider.`;
+    if (e.status === 401) return `${host} rejected the API key. Check it in Settings > AI Model > AI provider.`;
     if (e.status === 403) return `This API key isn't allowed to use ${model || defaultModel} on ${host}.`;
-    if (e.status === 404) return `${host} doesn't have a model called "${model || defaultModel}", or the base URL is wrong. Check both in Settings > Answers > AI provider.`;
+    if (e.status === 404) return `${host} doesn't have a model called "${model || defaultModel}", or the base URL is wrong. Check both in Settings > AI Model > AI provider.`;
     if (e.status === 429) return `${host} is rate limiting or out of quota. Wait a moment, or check your plan.`;
     if (e.status === 413) return "This question was too large to send. Remove some screenshots and try again.";
     // Text-only models refuse screenshots.
-    if (e.status === 400 && /image|vision|multimodal/i.test(e.message)) return `${model || defaultModel} can't read screenshots. Turn off Settings > Answers > Screenshot every question, or use a model that reads images.`;
+    if (e.status === 400 && /image|vision|multimodal/i.test(e.message)) return `${model || defaultModel} can't read screenshots. Turn off Settings > AI Model > Screenshot every question, or use a model that reads images.`;
     if (e.status >= 500) return `${host} is having trouble (${e.status}). Try again in a moment.`;
     return `${host} couldn't process this request: ${e.message}`;
   };

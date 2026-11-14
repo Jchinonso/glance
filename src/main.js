@@ -1,6 +1,6 @@
 import { app, BrowserWindow, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, Menu, nativeImage, nativeTheme, Notification, safeStorage, screen, shell, systemPreferences, Tray } from "electron";
 import { execFileSync, spawn } from "node:child_process";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,6 +11,7 @@ import { normalizeBaseUrl } from "./urls.js";
 import { caveman, keepsFacts } from "./compress.js";
 import { DEFAULT_BASE_URL, downloadModel, MODEL, modelPath, modelPresent, modelSize, removeOldModels, verifyModel } from "./models.js";
 import { extractResume, RESUME_EXTENSIONS } from "./resume.js";
+import { appBundle, canReplace, checkForUpdate, downloadUpdate, RELEASES_REPO, RELEASES_URL, removeUpdateLeftovers, stageUpdate, SWAP_SCRIPT, UpdateError } from "./update.js";
 import { isBackchannel, isPromptHallucination } from "./transcript.js";
 import { answerSystemPrompt, ask, compressInstructions, describeError, isNoAnswer, splitKeys, summarizeSession } from "./assistant.js";
 import { ANTHROPIC_MODELS, createProvider, DEFAULT_ANTHROPIC_MODEL, isAbort, MOST_CAPABLE_ANTHROPIC_MODEL, PROVIDERS, supportsEffort } from "./providers.js";
@@ -245,6 +246,88 @@ function setUpSpeech({ retry = true } = {}) {
 
 // usage is a provider's normalized { input, output, cacheRead, cacheWrite }.
 // Cost is null when the provider has no price list (OpenAI-compatible).
+// Updates: Glance looks for a newer release when it opens and once a day
+// (again in half an hour when the check couldn't reach GitHub). The next
+// check is a time of day, looked at every few minutes: a single long timer
+// stops counting while the Mac sleeps.
+// Update downloads the DMG, checks it, swaps the app and reopens.
+// status: none | available | downloading | installing | error
+const UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
+const UPDATE_RETRY_MS = 30 * 60 * 1000;
+const UPDATE_TICK_MS = 10 * 60 * 1000;
+let nextUpdateCheckAt = 0;
+let update = { status: "none" };
+let updateInfo = null; // { version, url, size, sha256, page }
+let updateBroadcastAt = 0;
+const currentVersion = () => (TEST_DIR && process.env.GLANCE_TEST_VERSION) || app.getVersion();
+
+// Resolves with what it found (Settings > About shows it): available, latest,
+// failed, busy (an update is downloading) or off.
+async function checkUpdate() {
+  // The UI tests check only against their own server; npm run dev never does.
+  if (TEST_DIR ? !process.env.GLANCE_UPDATE_URL : !app.isPackaged) return "off";
+  if (update.status === "downloading" || update.status === "installing") return "busy";
+  nextUpdateCheckAt = Date.now() + UPDATE_CHECK_MS;
+  try {
+    const found = await checkForUpdate({
+      current: currentVersion(),
+      arch: process.arch,
+      url: TEST_DIR ? process.env.GLANCE_UPDATE_URL : RELEASES_URL,
+      trusted: TEST_DIR ? () => true : undefined,
+    });
+    if (!found) return "latest";
+    if (found.version !== updateInfo?.version) {
+      updateInfo = found;
+      update = { status: "available", version: found.version };
+      log("update available:", found.version);
+      broadcastState();
+    }
+    return "available";
+  } catch (e) {
+    log("update check failed:", e.message);
+    nextUpdateCheckAt = Date.now() + UPDATE_RETRY_MS;
+    return "failed";
+  }
+}
+
+async function installUpdate() {
+  if (!updateInfo || update.status === "downloading" || update.status === "installing") return;
+  const { version, size, page } = updateInfo;
+  const bundle = appBundle(process.execPath);
+  if (!bundle || !canReplace(bundle)) {
+    log("update: can't replace", bundle || process.execPath, "- opening the download page");
+    return shell.openExternal(page);
+  }
+  const dmg = path.join(app.getPath("temp"), `Glance-${version}-${process.arch}.dmg`);
+  try {
+    update = { status: "downloading", version, received: 0, total: size };
+    broadcastState();
+    await downloadUpdate(updateInfo, {
+      file: dmg,
+      onProgress: (received) => {
+        update.received = received;
+        if (Date.now() - updateBroadcastAt < 250) return;
+        updateBroadcastAt = Date.now();
+        broadcastState();
+      },
+    });
+    update = { status: "installing", version };
+    broadcastState();
+    const staged = await stageUpdate({ dmg, bundle, version });
+    log("update: installing", version);
+    spawn("/bin/sh", ["-c", SWAP_SCRIPT, "sh", String(process.pid), bundle, staged], { detached: true, stdio: "ignore" }).unref();
+    app.quit();
+  } catch (e) {
+    log("update failed:", e.message);
+    update = { status: "error", version, error: e instanceof UpdateError ? e.message : "The update couldn't be installed. Try again, or use the download page." };
+    broadcastState();
+  } finally {
+    try {
+      rmSync(dmg, { force: true });
+    } catch {}
+  }
+}
+
 function addUsage(u, model = currentModel()) {
   if (!u) return null;
   const cost = provider().cost(u, model);
@@ -443,6 +526,9 @@ function state() {
     jdCheckedAt: config.jdCheckedAt,
     // The download (setup's speech step) and the engine (Settings).
     speech: { ...speech },
+    update: { ...update },
+    version: currentVersion(),
+    arch: process.arch,
     vocabulary: config.vocabulary,
     autoScreen: config.autoScreen,
     compactAnswers: config.compactAnswers,
@@ -465,8 +551,36 @@ function broadcastState() {
   send("state", state());
 }
 
+// Hidden from screen sharing also means out of the Dock and the app
+// switcher, which a full-screen share would show. Visible: Glance gets a
+// Dock icon like any app. (The UI tests leave the Dock alone.)
 function applyInvisible() {
   win?.setContentProtection(config.invisible);
+  if (TEST_DIR || !app.dock) return;
+  if (config.invisible) app.dock.hide();
+  else app.dock.show().catch(() => {});
+}
+
+// The menu bar macOS shows while Glance has a Dock icon. Electron's stock
+// menu would offer Reload (which drops the session), Developer Tools and
+// Close Window (which quits); this one has only what Glance means. The Edit
+// menu is what makes copy, paste and undo work in the text boxes.
+function setAppMenu() {
+  if (!app.isPackaged) return; // npm run dev keeps Reload and Developer Tools
+  Menu.setApplicationMenu(
+    Menu.buildFromTemplate([
+      {
+        label: "Glance",
+        submenu: [
+          { label: "Show Glance", click: () => showWindow() },
+          { label: "Hide Glance", click: () => hideWindow() },
+          { type: "separator" },
+          { label: "Quit Glance", role: "quit" },
+        ],
+      },
+      { role: "editMenu" },
+    ]),
+  );
 }
 
 function createWindow() {
@@ -581,19 +695,9 @@ function toggleWindow() {
 // Menu bar icon: a lens (ring with a centre dot), drawn as a template image so
 // macOS tints it for light and dark menu bars.
 function trayIcon() {
-  const size = 36; // 18pt at 2x
-  const buf = Buffer.alloc(size * size * 4);
-  const c = (size - 1) / 2;
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const d = Math.hypot(x - c, y - c);
-      const ring = Math.max(0, 1 - Math.abs(d - 12) / 2.2);
-      const dot = Math.max(0, Math.min(1, 5.5 - d));
-      const a = Math.round(Math.min(1, ring + dot) * 255);
-      buf.writeUInt32LE((a << 24) >>> 0, (y * size + x) * 4); // BGRA, black
-    }
-  }
-  const img = nativeImage.createFromBitmap(buf, { width: size, height: size, scaleFactor: 2 });
+  // trayTemplate.png and its @2x beside it; a template image, so macOS tints
+  // it for light and dark menu bars.
+  const img = nativeImage.createFromPath(path.join(here, "assets", "trayTemplate.png"));
   img.setTemplateImage(true);
   return img;
 }
@@ -1084,7 +1188,7 @@ const SHORTCUT_ACTIONS = {
     applyInvisible();
     broadcastState();
     const keys = formatAccel(shortcuts().invisible);
-    send("notice", config.invisible ? { level: "ok", text: `Hidden from screen sharing (${keys}).` } : { level: "warn", text: `Glance is now visible in screen sharing. Press ${keys} to hide it again.` });
+    send("notice", config.invisible ? { level: "ok", text: `Hidden from screen sharing and the Dock (${keys}).` } : { level: "warn", text: `Glance is now visible in screen sharing and the Dock. Press ${keys} to hide it again.` });
   },
 };
 
@@ -1349,6 +1453,15 @@ ipcMain.on("resize", (_e, height) => {
   const over = b.y + b.height - (workArea.y + workArea.height);
   if (over > 0) win.setPosition(b.x, Math.max(workArea.y, b.y - over));
 });
+const LINKS = {
+  releases: `https://github.com/${RELEASES_REPO}/releases`,
+  help: `https://github.com/${RELEASES_REPO}#readme`,
+  issues: `https://github.com/${RELEASES_REPO}/issues`,
+};
+ipcMain.handle("open-link", (_e, name) => Object.hasOwn(LINKS, name) && shell.openExternal(LINKS[name]));
+ipcMain.handle("check-update", () => checkUpdate());
+ipcMain.handle("install-update", () => installUpdate());
+ipcMain.handle("open-update-page", () => updateInfo && shell.openExternal(updateInfo.page));
 ipcMain.handle("quit", () => app.quit());
 // macOS starts sending system audio only after the app reopens.
 ipcMain.handle("relaunch", () => {
@@ -1378,10 +1491,15 @@ ipcMain.handle("delete-all-data", async (_e, options) => {
 
 if (!app.requestSingleInstanceLock()) app.quit();
 app.on("second-instance", () => win?.show());
+// A click on the Dock icon. (macOS also sends this at launch, before the
+// window has loaded; it shows itself then.)
+app.on("activate", () => windowReady && showWindow());
 
 app.whenReady().then(() => {
   log("start", app.getVersion(), "screen status:", systemPreferences.getMediaAccessStatus("screen"));
   loadConfig();
+  applyInvisible(); // the Dock icon, without waiting for the window to load
+  setAppMenu();
   setUpSpeech();
   createWindow();
   createTray();
@@ -1401,6 +1519,10 @@ app.whenReady().then(() => {
       text: `${failed.map(formatAccel).join(", ")} ${failed.length === 1 ? "is" : "are"} already used by another app. Change ${failed.length === 1 ? "it" : "them"} in Settings > General > Shortcuts.`,
     });
   }
+  const bundle = appBundle(process.execPath);
+  if (bundle) removeUpdateLeftovers({ bundle, temp: app.getPath("temp") });
+  checkUpdate();
+  setInterval(() => Date.now() >= nextUpdateCheckAt && checkUpdate(), UPDATE_TICK_MS);
   // While listening, refresh the answer prompt's cache before it expires.
   setInterval(() => {
     if (!listening || current) return;

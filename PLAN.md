@@ -15,7 +15,7 @@ clicks. Real use is the best way to find what's left.
   - Answers read naturally aloud; note any that sound off.
   - Follow-up questions stay consistent with earlier answers.
 - **Another provider.** Set up OpenAI, Gemini (OpenAI-compatible endpoint) or a
-  local Ollama model in Settings > Answers > AI provider. Ask a typed
+  local Ollama model in Settings > AI Model > AI provider. Ask a typed
   question, a screenshot question and a heard question.
 - **Other resume PDFs.** Import PDFs exported from Word, Google Docs, Canva and
   LaTeX; check the imported text keeps its lines and bullets.

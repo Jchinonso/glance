@@ -122,7 +122,7 @@ function renderStrip() {
   renderTimer();
   const cloak = $("cloakBtn");
   cloak.setAttribute("aria-pressed", String(!!state.invisible));
-  cloak.title = state.invisible ? "Hidden from screen sharing. Click to show it (⌘⇧H)." : "Visible in screen sharing. Click to hide it (⌘⇧H).";
+  cloak.title = state.invisible ? "Hidden from screen sharing and the Dock. Click to show it (⌘⇧H)." : "Visible in screen sharing and the Dock. Click to hide it (⌘⇧H).";
   const last = heard.at(-1);
   $("caption").hidden = !state.listening;
   if (pendingQuestion && state.listening) {
@@ -172,6 +172,8 @@ function modelHint(id) {
 function renderMenu() {
   for (const b of $("settingsTabs").querySelectorAll("button")) b.setAttribute("aria-selected", String(b.dataset.tab === settingsTab));
   for (const t of document.querySelectorAll("#menu .tab")) t.hidden = t.dataset.tab !== settingsTab;
+  $("aboutVersion").textContent = `Version ${state.version} · ${state.arch === "arm64" ? "Apple Silicon" : "Intel"}`;
+  renderAboutUpdate();
   $("styleHint").textContent = `${STYLE_HINTS[meetingStyle()]}${state.style === "interview" ? " Used when you switch back to Meeting." : ""}`;
   const interview = state.style === "interview";
   $("interviewToggle").setAttribute("aria-checked", String(interview));
@@ -435,6 +437,7 @@ function render() {
     if (state.speech?.status !== "ready" && state.onboarded && !onboarding) startOnboarding("speech");
   }
   renderShortcutHints();
+  renderUpdate();
   renderStrip();
   renderMenu();
   renderStage();
@@ -452,6 +455,58 @@ function renderTranscriptLine(l) {
   if (lines.length > 1000) lines[0].remove();
   if (view === "transcript") $("stage").scrollTop = $("stage").scrollHeight;
 }
+
+// The update bar. Later hides it for that version until Glance reopens; it
+// also stays out of the way during a call and during setup.
+let updateDismissed = null;
+// Updating restarts Glance, which clears the transcript and answers.
+const updateSessionNote = () => ((state.transcriptCount || 0) > 0 || answers.length > 0 ? " Save notes first: updating restarts Glance and clears this session." : "");
+const updateStatusText = (u) =>
+  u.status === "downloading" ? `Downloading Glance ${u.version}: ${Math.floor(((u.received || 0) / (u.total || 1)) * 100)}%`
+  : u.status === "installing" ? `Installing Glance ${u.version}. Glance will reopen in a moment.`
+  : u.status === "error" ? u.error
+  : `Glance ${u.version} is available.${updateSessionNote()}`;
+function renderUpdate() {
+  const u = state.update || { status: "none" };
+  const active = u.status === "downloading" || u.status === "installing";
+  $("updateBar").hidden = u.status === "none" || (!active && (updateDismissed === u.version || !!state.listening || !!onboarding));
+  $("updateBox").classList.toggle("error", u.status === "error");
+  $("updateText").textContent = updateStatusText(u);
+  $("updateLater").hidden = active;
+  $("updatePage").hidden = u.status !== "error";
+  $("updateBtn").hidden = active;
+  $("updateBtn").textContent = u.status === "error" ? "Try again" : "Update";
+}
+// Settings > About: the same update, reachable when the bar is hidden. With
+// nothing to install the row checks instead; what the check said shows until
+// the tab changes.
+let updateCheckResult = null;
+const UPDATE_CHECK_TEXT = {
+  checking: "Checking…",
+  available: "A newer version is ready.",
+  latest: "You have the latest version.",
+  failed: "Couldn't check right now. Try again in a while.",
+  busy: "An update is already on its way.",
+  off: "Update checks only run in the installed app.",
+};
+function renderAboutUpdate() {
+  const u = state.update || { status: "none" };
+  const ready = u.status === "available" || u.status === "error";
+  const active = u.status === "downloading" || u.status === "installing";
+  $("updateCheckBtn").disabled = active;
+  $("updateCheckTitle").textContent = ready ? `Update to Glance ${u.version}` : active ? `Updating to Glance ${u.version}` : "Check for updates";
+  $("updateCheckMeta").textContent =
+    u.status === "error" ? `${u.error} Click to try again.`
+    : ready ? `Downloads it, installs it and reopens Glance.${updateSessionNote()}`
+    : active ? updateStatusText(u)
+    : UPDATE_CHECK_TEXT[updateCheckResult] || "Glance also checks by itself when it opens and once a day.";
+}
+$("updateBtn").addEventListener("click", () => g.installUpdate());
+$("updatePage").addEventListener("click", () => g.openUpdatePage());
+$("updateLater").addEventListener("click", () => {
+  updateDismissed = state.update?.version;
+  renderUpdate();
+});
 
 function showNotice({ level, text, action }) {
   const n = $("notice");
@@ -1075,12 +1130,12 @@ const hostOf = (url) => {
 // Same rule as main's isLocalUrl: these servers need no API key.
 const LOCAL_URL = /^https?:\/\/(?:localhost|127\.0\.0\.1|\[::1\])(?::\d+)?(?:\/|$)/i;
 
-// Provider errors end with where to fix them ("Check it in Settings > Answers >
+// Provider errors end with where to fix them ("Check it in Settings > AI Model >
 // AI provider."). In this form that's where the user already is, so drop it.
 const inForm = (message) =>
   String(message)
-    .replace(/Check the base URL in Settings > Answers > AI provider, and your connection\./g, "Check the server address and your connection.")
-    .replace(/\s*Check (?:it|both)[^.]*Settings > Answers > AI provider[^.]*\./g, "")
+    .replace(/Check the base URL in Settings > AI Model > AI provider, and your connection\./g, "Check the server address and your connection.")
+    .replace(/\s*Check (?:it|both)[^.]*Settings > AI Model > AI provider[^.]*\./g, "")
     .trim() || String(message);
 
 function setTestStatus(kind, text) {
@@ -1256,6 +1311,24 @@ $("shortcutsDone").addEventListener("click", () => {
 });
 $("collapseBtn").addEventListener("click", () => setCollapsed(!collapsed));
 $("hideTopBtn").addEventListener("click", () => g.hide());
+// Quit from the top bar. During a call it takes a second click, so a slip
+// doesn't end the transcript.
+// The X stays red while it waits: the notice is hidden when Glance is collapsed.
+let quitArmed = null;
+$("quitTopBtn").addEventListener("click", () => {
+  const b = $("quitTopBtn");
+  if (state.listening && !quitArmed) {
+    b.classList.add("armed");
+    b.title = "Click again to quit Glance";
+    quitArmed = setTimeout(() => {
+      quitArmed = null;
+      b.classList.remove("armed");
+      b.title = "Quit Glance";
+    }, 5000);
+    return showNotice({ level: "warn", text: "Glance is listening to your call. Click the X again to quit." });
+  }
+  g.quit();
+});
 $("copyBtn").addEventListener("click", () => {
   const a = answers[page];
   if (!a?.text) return;
@@ -1507,10 +1580,24 @@ $("keyBtn").addEventListener("click", () => {
   $("keyInput").focus();
 });
 $("quitBtn").addEventListener("click", () => g.quit());
+$("updateCheckBtn").addEventListener("click", async () => {
+  const status = state.update?.status;
+  if (status === "available" || status === "error") {
+    updateDismissed = null;
+    return g.installUpdate();
+  }
+  updateCheckResult = "checking";
+  renderAboutUpdate();
+  updateCheckResult = await g.checkUpdate();
+  if (updateCheckResult === "available") updateDismissed = null;
+  render();
+});
+for (const b of document.querySelectorAll("[data-link]")) b.addEventListener("click", () => g.openLink(b.dataset.link));
 $("settingsTabs").addEventListener("click", (e) => {
   const tab = e.target.closest("button")?.dataset.tab;
   if (!tab) return;
   settingsTab = tab;
+  updateCheckResult = null;
   try {
     localStorage.setItem("glance.settingsTab", tab);
   } catch {}

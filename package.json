@@ -1,14 +1,16 @@
 {
   "name": "glance",
-  "version": "1.6.2",
+  "version": "1.7.0",
   "description": "macOS overlay that answers questions about your screen and calls with Claude or any OpenAI-compatible model, and saves meeting notes",
   "main": "src/main.js",
   "scripts": {
     "test": "node --test test/*.test.js",
     "start": "open dist/Glance-darwin-arm64/Glance.app",
-    "package": "electron-packager . Glance --platform=darwin --arch=arm64 --app-bundle-id=com.glance.overlay --out=dist --overwrite --ignore='^/dist' --ignore='^/build' --ignore='^/test' --ignore='^/README.md' --ignore='^/docs' --ignore='^/scripts' --ignore='^/PLAN.md' --ignore='^/\\.' --ignore='^/models' --asar.unpackDir='{node_modules/audiotee/bin,node_modules/sherpa-onnx-darwin-arm64}' --extend-info=build/extra.plist && codesign --force --deep --sign - dist/Glance-darwin-arm64/Glance.app && codesign --force --sign - --requirements '=designated => identifier \"com.glance.overlay\"' dist/Glance-darwin-arm64/Glance.app",
+    "package": "sh scripts/package.sh arm64",
+    "package:x64": "sh scripts/package.sh x64",
     "dev": "electron .",
-    "dmg": "npm run package && sh scripts/make-dmg.sh"
+    "dmg": "npm run package && sh scripts/make-dmg.sh arm64",
+    "dmg:x64": "npm run package:x64 && sh scripts/make-dmg.sh x64"
   },
   "type": "module",
   "dependencies": {

@@ -37,6 +37,7 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 - **Keeps up with you.** If you said something different from the suggestion, press **I said something else** and type a few words; follow-ups build on what you actually said.
 - **Sees your screen.** Screenshot a coding problem, an error or a shared doc and get an answer (⌘⇧2).
 - **Any model.** Anthropic (Opus, Sonnet, Haiku) or any OpenAI-compatible API: OpenAI, Google Gemini, OpenRouter, Groq, Mistral, or a local Ollama or LM Studio.
+- **Updates in one click.** When a newer version is out, Glance says so; **Update** downloads it, checks it, installs it and reopens.
 - **Meeting notes.** Save a Markdown summary with decisions, action items, the transcript and every question asked.
 - **Stays out of the way.** A small always-on-top panel that sizes itself to its content, can hide from screen sharing, and follows macOS light and dark mode, or you can set it to light or dark in **Settings › General › Appearance**.
 
@@ -52,10 +53,12 @@ A macOS overlay for calls and interviews. Glance listens to the other side of th
 | **Each new interview.** Keep the same role or add its job description. | **Key points.** The opening line and the beats of the answer. |
 | ![Meeting or Interview menu](docs/images/mode-menu.png) | ![Light mode](docs/images/light-mode.png) |
 | **Answer mode.** Meeting or Interview, one click away. | **Light mode.** Follows macOS, or set it in Settings › General › Appearance. |
-| ![Settings, Interview tab](docs/images/settings-interview.png) | ![Settings, Answers tab](docs/images/settings-answers.png) |
-| **Settings › Interview.** Interview mode, auto-answer, key points, résumé. | **Settings › Answers.** Provider, model, depth and style. |
+| ![Settings, Interview tab](docs/images/settings-interview.png) | ![Settings, AI Model tab](docs/images/settings-answers.png) |
+| **Settings › Interview.** Interview mode, auto-answer, key points, résumé. | **Settings › AI Model.** Provider, model, depth and style. |
+| ![Settings, About tab](docs/images/settings-about.png) | |
+| **Settings › About.** Version, Check for updates, release notes and help. | |
 
-The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated with `node scripts/screenshots.mjs`.
+The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated with `node scripts/screenshots.mjs`. The app icon, menu bar icon and in-app logo come from `build/icon.svg` and `src/assets/tray.svg`; regenerate them with `node_modules/.bin/electron scripts/make-icon.mjs`.
 
 ## Download
 
@@ -70,6 +73,16 @@ The screenshots use a made-up profile (Jane Doe at Acme Pay) and are regenerated
 2. Open it and drag **Glance** onto **Applications**.
 3. Open Glance from Applications. The app isn't notarized by Apple, so the first time macOS says it can't verify the developer: **right-click Glance › Open › Open**, or go to **System Settings › Privacy & Security** and click **Open Anyway**. After that it opens normally.
 4. Follow the setup, and grant **Screen & System Audio Recording** when macOS asks (then quit and reopen Glance).
+
+**Or install from Terminal**, which skips the "can't verify the developer" step:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Jchinonso/glance/main/install.sh | sh
+```
+
+It picks the build for your Mac, checks the download against the release's SHA-256, and copies Glance into Applications.
+
+**Updates.** Glance looks for a newer release when it opens and once a day (or when you press **Settings › About › Check for updates**). When there is one, a bar appears under the top bar: press **Update** and Glance downloads it, checks it against the release's SHA-256, replaces itself and reopens. Updating restarts Glance, which clears the current transcript and answers, so save notes first if you're mid-call (the bar reminds you). **Later** hides the bar until Glance next opens. The bar stays hidden while Listen is on. If Glance can't replace itself (it's running from the DMG, for example), Update opens the download page instead.
 
 Nothing else to install: the speech engine ([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), on the CPU) is inside the app.
 
@@ -133,12 +146,15 @@ Glance starts in Interview mode. Switch with the mode menu beside the question b
 
 ## Settings
 
-The gear opens four tabs (**Answers**, **Interview**, **Session**, **General**). Panels opened from Settings have a Back button that returns to the same tab.
+The gear opens five tabs (**AI Model**, **Interview**, **Session**, **General**, **About**). Panels opened from Settings have a Back button that returns to the same tab.
 
-- **Answers:** AI provider and key, model (listed from the provider, searchable, and any model ID can be typed), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
+- **AI Model:** AI provider and key, model (listed from the provider, searchable, and any model ID can be typed), Depth (Quick, Balanced, Thorough), meeting style (Natural or Brief), custom instructions (compressed automatically when saved), and Screenshot every question (whether typed questions include a screenshot).
 - **Interview:** Interview mode, auto-answer, key points, résumé, your details, job description, and a warning when Glance would show in a screen share.
 - **Session:** spending so far, the transcript, Save notes, Clear session.
 - **General:** Speech (Parakeet, on this Mac, with the download's progress and **Try again** when it's needed), Appearance (System, Light, Dark), words to recognize (names and terms to listen for), hide from screen sharing, shortcuts, show the welcome again, and Delete all Glance data.
+- **About:** the version and which build you have (Apple Silicon or Intel), **Check for updates** (it becomes **Update to Glance …** when a newer version is out, and installs it when pressed), and links to the release notes, this guide and the issue tracker.
+
+The **X** at the right of the top bar quits Glance; the **–** beside it only hides the window (bring it back from the menu bar icon). While Listen is on, the X turns red and asks for a second click, so a slip doesn't end the call's transcript.
 
 ### Speech
 
@@ -152,14 +168,14 @@ Glance has one speech engine and one model: NVIDIA's [Parakeet TDT 0.6B v2](http
 
 ### Depth
 
-**Settings › Answers › Depth** (Quick, Balanced, Thorough) sets how long the model may think on questions that need it. Everyday spoken questions stay fast either way.
+**Settings › AI Model › Depth** (Quick, Balanced, Thorough) sets how long the model may think on questions that need it. Everyday spoken questions stay fast either way.
 
 - Which questions use it: [Depth and Think harder](#depth-and-think-harder)
 - Recommended settings: [Choosing a model](#choosing-a-model)
 
 ## AI providers
 
-Choose a provider in **Settings › Answers › AI provider**, or during setup. Both cards open the same form:
+Choose a provider in **Settings › AI Model › AI provider**, or during setup. Both cards open the same form:
 
 | Card | For | Fields |
 | --- | --- | --- |
@@ -171,7 +187,7 @@ Choose a provider in **Settings › Answers › AI provider**, or during setup. 
 - Listed by the provider itself: Anthropic's Models API, or the server's `/models` endpoint.
 - The **Model** box filters as you type (OpenRouter lists hundreds), and you can type any model ID the list doesn't show.
 - Left out: models that can't chat (embeddings, speech, image and moderation models) and OpenRouter's delayed `:batch` versions.
-- **Settings › Answers › Model** shows the same list as a dropdown with a **Refresh** link. The line under it gives the price per million tokens for Opus 5.5, Sonnet 5.5 and Haiku 5.5.
+- **Settings › AI Model › Model** shows the same list as a dropdown with a **Refresh** link. The line under it gives the price per million tokens for Opus 5.5, Sonnet 5.5 and Haiku 5.5.
 - **Depth** appears only for models that support it, so it's hidden for older Claude models such as Haiku 4.5.
 
 **Test connection** sends one tiny request with what's in the form, even before you save, and reports how long the model took to reply. Use it to check a new key, model or server address.
@@ -216,7 +232,7 @@ On **OpenRouter** (one key for many companies' models), with a cheaper alternati
 
 ### Setting up OpenRouter
 
-1. Open **Settings › Answers › AI provider** and choose **OpenAI-compatible**.
+1. Open **Settings › AI Model › AI provider** and choose **OpenAI-compatible**.
 2. Type `openrouter.ai` as the server address. Glance fills in `https://openrouter.ai/api/v1`.
 3. Pick the model from the list.
 4. Paste your OpenRouter key from [openrouter.ai/keys](https://openrouter.ai/keys).
@@ -227,7 +243,7 @@ On **OpenRouter** (one key for many companies' models), with a cheaper alternati
 - Turn on **Interview mode** with auto-answer.
 - In a coding or design round, press **Screenshot** (⌘⇧2) when the problem appears. The answer uses the screen and what was just said.
 
-> A spoken question gets a screenshot by itself only when it mentions the screen ("look at this function"). **Settings › Answers › Screenshot every question** only adds one to questions you type.
+> A spoken question gets a screenshot by itself only when it mentions the screen ("look at this function"). **Settings › AI Model › Screenshot every question** only adds one to questions you type.
 
 ### Anthropic or OpenRouter
 
@@ -318,7 +334,7 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
 - **Listening shows nothing.** macOS sends an app system audio only after it reopens following the permission prompt. Until then Glance hears silence, and after 15 seconds of it (once each time Glance opens, and not once sound has come through) it says so with a **Reopen Glance** button. If that doesn't help:
   - Check Glance is on under **Screen & System Audio Recording** and under **System Audio Recording Only**.
 - **Answers are slow.** Everyday spoken questions always answer at Quick. If hard, typed or screenshot questions feel slow:
-  - Set **Settings › Answers › Depth** to **Quick**, and press **Think harder** only when an answer looks shaky.
+  - Set **Settings › AI Model › Depth** to **Quick**, and press **Think harder** only when an answer looks shaky.
   - Use a faster model: Haiku 5.5 starts in about a second (see [Choosing a model](#choosing-a-model)).
   - Check the log for slow transcription (see Logs below): `decodeMs` well over a second per phrase means the Mac is busy.
 - **A question gets no answer.**
@@ -328,7 +344,10 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
 - **The speech model download fails.** Check the connection, then press **Try again** in setup (or Settings › General › Speech). It resumes from where it stopped. Glance retries 3 times on its own before showing **Try again**.
 - **Names or jargon are misheard.** Add them under Settings › General › Words to recognize, separated by commas. The engine boosts them, along with a built-in list of common tech terms; the log lists any it had to leave out (`hotwords skipped`).
 - **A shortcut doesn't work.** Another app may own it; Glance says which at startup. Change it in Settings › General › Shortcuts.
-- **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › Answers › AI provider.
+- **Answers fail.** The message says why (key rejected, out of credit, model not found, rate limited). Check Settings › AI Model › AI provider.
+- **Glance has disappeared.** With **Hide from screen sharing** on it has no Dock icon: look for the eye icon in the menu bar (top right) and click it, or press ⌘\\ (Command-Backslash). If the menu bar is crowded, the icon can sit behind the notch: quit a few menu bar apps, or use the shortcut.
+- **Update opens a web page instead of installing.** Glance can't replace itself where it is: it's running from the DMG, or from a folder this account can't write to. Drag Glance into Applications and open it from there, or run the Terminal command under [Download](#download).
+- **An update failed.** The bar says why (no connection, no disk space, a corrupted download). Press **Try again**, or **Download page** to get the DMG yourself. A failed update leaves the installed version untouched.
 - **Logs.** `~/Library/Logs/Glance/glance.log` records what happens in a session. It stays on your Mac and includes the first 80 characters of what was said.
   - **What it records:** the speech model (`speech model ok`, `speech model download …`, `engine=parakeet loaded loadMs=…`, `old speech models removed: … (… MB freed)`), each heard line (speech length, `transcribeMs`, `decodeMs`, `waitMs`, `queued`, `via=parakeet`), question detected / extended / replaced / dropped, auto-answer fired, turn check sent and its result (`result=none` or `result=answer`), each answer (`sinceSpeechEndMs`, model, `effort` used and your `depth` setting, `hard` and `deep` for hard questions and Think harder, first-token ms, total ms, `cacheRead` and `cacheWrite`), and `prewarm` when Listen warms the cache.
   - **How to read it:**
@@ -343,12 +362,15 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
 - **The microphone is never recorded.** Glance hears only the Mac's audio, the other side of the call.
 - **Keys** are stored in the macOS login keychain, not in files.
 - **Where things live.** Settings are in `~/Library/Application Support/Glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
+- **Update checks.** When it opens and once a day, Glance asks GitHub for the latest release of this repository. The request carries nothing about you or your calls; like any web request, GitHub sees your IP address. Nothing is downloaded until you press **Update**.
 - Glance treats the transcript, screen text, résumé and job description as data, not instructions.
 - **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
 
 ## Screen sharing: what hiding does and doesn't do
 
 With **Hide from screen sharing** on (the eye icon, ⌘⇧H), macOS leaves Glance out of screen captures and recordings, including Zoom, Meet and Teams screen shares. Glance keeps itself out of its own screenshots either way.
+
+Hiding also keeps Glance out of the **Dock** and the app switcher (⌘Tab), which a full-screen share would show: it lives only in the menu bar, as an eye icon. Turn hiding off and Glance gets a Dock icon like any other app; click it to bring the window back.
 
 It does **not** hide Glance from a camera pointed at your screen, from interview tools that lock down the browser or watch the camera, or from an interviewer noticing you reading. Many companies don't allow outside help during interviews; check the rules before you use it.
 
@@ -396,6 +418,7 @@ Mac audio ──► speech detection ──► Parakeet (sherpa-onnx, CPU) ─�
 - `src/assistant.js`: prompts and features (answers, Interview mode, instruction compression, notes), independent of any vendor.
 - `src/providers.js`: Anthropic and OpenAI-compatible adapters behind one interface. Adding a provider means adding one adapter.
 - `src/compress.js`: mechanical compression of the transcript and earlier answers sent with every question; numbers, code, quotes and negations are never touched.
+- `src/update.js`: updates. Finds a newer release, downloads its DMG, checks size and SHA-256, copies the app out, and swaps it in once Glance has quit.
 - `src/resume.js`: résumé and job description import (PDFKit and `textutil`, built into macOS).
 - `src/ui/`: the interface. `app.js` (window logic), `questions.js` (question detection and joining), `markdown.js` and `highlight.js` (answer rendering), `onboarding.js`, `hints.js`.
 
@@ -411,9 +434,12 @@ npm start   # opens dist/Glance-darwin-arm64/Glance.app
 
 # Optional: a DMG for sharing, at dist/Glance-<version>-arm64.dmg
 npm run dmg
+
+# Optional: the Intel build, at dist/Glance-<version>-x64.dmg
+npm run dmg:x64
 ```
 
-`npm run dev` and the packaged app both download the speech model into `~/Library/Application Support/Glance/models` on first launch. Nothing model-related is packed into the app. The DMG is LZMA-compressed and takes about 4 minutes to build. These scripts build the Apple Silicon app; the Intel DMG on the Releases page is packaged separately with `--arch=x64` and the `sherpa-onnx-darwin-x64` package in place of `sherpa-onnx-darwin-arm64`.
+`npm run dev` and the packaged app both download the speech model into `~/Library/Application Support/Glance/models` on first launch. Nothing model-related is packed into the app. The DMG is LZMA-compressed and takes about 4 minutes to build. `npm run package:x64` and `npm run dmg:x64` build for Intel on an Apple Silicon Mac: the first run fetches the Intel speech engine (`sherpa-onnx-darwin-x64`) into `node_modules` without saving it to `package.json`. A release needs both DMGs attached, named `Glance-<version>-arm64.dmg` and `Glance-<version>-x64.dmg`: the updater and `install.sh` find them by those names and check them against the SHA-256 GitHub lists for each.
 
 `npm run dev` runs from source, but macOS won't grant it screen recording, so screenshots only work in the packaged app. Quit Glance before running `npm run package` again.
 

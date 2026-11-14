@@ -138,6 +138,8 @@ await run(`await g.setSetting("provider", "anthropic"); await g.setSetting("mode
 await shot("settings-answers");
 await run(`document.querySelector('#settingsTabs [data-tab="general"]').click(); document.getElementById("stage").scrollTop = 0;`);
 await shot("settings-general");
+await run(`document.querySelector('#settingsTabs [data-tab="about"]').click(); document.getElementById("stage").scrollTop = 0;`);
+await shot("settings-about");
 await run(`setMenu(false);`);
 
 await cdp("Emulation.setEmulatedMedia", { features: [{ name: "prefers-color-scheme", value: "light" }] });
