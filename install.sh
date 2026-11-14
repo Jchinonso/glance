@@ -48,15 +48,26 @@ main() {
     403 | 429) fail "GitHub is limiting requests from this network right now. Try again in an hour, or download the DMG from https://github.com/$repo/releases/latest" ;;
     *) fail "GitHub answered with an error ($code). Try again later, or download the DMG from https://github.com/$repo/releases/latest" ;;
   esac
-  version=$(sed -n 's/^ *"tag_name": *"v\{0,1\}\([0-9][0-9.]*\)".*/\1/p' "$work/release.json" | head -1)
-  [ -n "$version" ] || fail "couldn't read the latest version."
+  # plutil reads JSON whatever its layout (GitHub sends it on one line or
+  # many). Prints the value at a key path, or fails if there is none.
+  field() { plutil -extract "$1" raw -o - "$work/release.json" 2>/dev/null; }
+  tag=$(field tag_name) || fail "couldn't read the latest version."
+  version=${tag#v}
+  case "$version" in
+    "" | *[!0-9.]*) fail "couldn't read the latest version." ;;
+  esac
   name="Glance-$version-$arch.dmg"
-  # The asset's own sha256, which GitHub lists a few lines after its name.
-  sum=$(awk -v name="$name" '
-    index($0, "\"name\": \"" name "\"") { found = 1 }
-    found && /"digest": *"sha256:/ { sub(/.*sha256:/, ""); sub(/".*/, ""); print; exit }
-    found && /"browser_download_url"/ { exit }
-  ' "$work/release.json")
+  # The sha256 GitHub lists for that DMG.
+  sum=""
+  i=0
+  while asset=$(field "assets.$i.name"); do
+    if [ "$asset" = "$name" ]; then
+      digest=$(field "assets.$i.digest") || digest=""
+      sum=${digest#sha256:}
+      break
+    fi
+    i=$((i + 1))
+  done
   [ ${#sum} -eq 64 ] || fail "release $version has no $arch download yet."
 
   echo "Downloading Glance $version ($arch)…"
