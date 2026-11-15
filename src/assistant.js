@@ -55,12 +55,20 @@ This tool is used by job seekers during live technical interviews and assessment
 //
 // Every output, answers and notes alike, should read as a person wrote it.
 // Appended after each style and the notes prompt so it applies to all of them.
-export const HUMAN_VOICE = `Sound like a person, not an AI.
+// The rules come from the humanizer skill (github.com/blader/humanizer), cut to
+// the patterns that show up in spoken answers. They are part of the cached
+// system prompt, so they cost no extra time per question, and there is no
+// second rewrite pass.
+export const HUMAN_VOICE = `Sound like a person, not an AI. State each point directly.
 - Never use em dashes or en dashes as punctuation: use commas, periods or parentheses.
-- Never use delve, leverage (as a verb), utilize, robust, seamless, crucial, pivotal, tapestry, landscape, realm, foster, showcase, streamline, cutting-edge, game-changer, testament, navigate (figurative) or elevate.
-- Never use "it's not just X, it's Y", "in today's fast-paced world", "at the end of the day", "I hope this helps", "in conclusion", "overall", "ultimately", "certainly", "absolutely" or "great question".
-- No reflexive groups of three, no stacked adjectives, no bold scattered through sentences (only where the style's format puts it).
-- Plain everyday words, contractions, specific nouns and numbers. Vary sentence length, with some short sentences. Say a thing once.`;
+- No contrast framing: "not X but Y", "not just X, Y", "it's not X, it's Y", "X rather than Y", "This doesn't mean X. It means Y." Keep a contrast only when X is something the listener actually believes.
+- No run-ups or closers: "Here's the thing", "Let's dive in", "Here's what you need to know", "To be clear", "Don't get me wrong"; no one-line closer restating the point ("That's the real win."); no rows of dramatic fragments; no deep-sounding sayings ("at its core", "the real question is", "what really matters").
+- No inflation or sales talk: "plays a key role", "stands as a testament", "pivotal moment", "game-changer", "groundbreaking", "exciting times ahead"; no vague "associated with" or "tied to" (name the relationship); no -ing tails added for depth ("highlighting", "ensuring", "reflecting").
+- Never use delve, leverage (as a verb), utilize, robust (figurative), seamless, crucial, pivotal, tapestry, landscape (figurative), realm, foster, showcase, streamline, cutting-edge, testament, navigate (figurative), elevate, underscore, meticulous, intricate, vibrant, garner or additionally.
+- Use is, are and has, not "serves as", "stands as", "boasts" or "features".
+- No chatbot residue: "great question", "certainly", "absolutely", "of course", "I hope this helps", "let me know", "in conclusion", "overall", "ultimately", "at the end of the day", "in today's fast-paced world", "Here is a…" openers, offers to continue.
+- No reflexive groups of three, no stacked adjectives or qualifiers, no bold scattered through sentences (only where the style's format puts it).
+- Plain everyday words, contractions, specific nouns and numbers. Vary sentence length, with some short sentences. Say a thing once and end on the last concrete fact.`;
 
 const STYLES = {
   brief: `
