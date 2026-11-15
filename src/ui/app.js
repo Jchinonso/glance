@@ -214,6 +214,7 @@ function renderMenu() {
   const providerLabel = (state.providers || []).find((p) => p.id === state.provider)?.label || "Anthropic";
   $("keyMeta").textContent = state.keyFromEnv ? `${providerLabel}, key from ${state.keyFromEnv}` : state.keyHint ? `${providerLabel}, key ends in ${state.keyHint}` : state.hasKey ? providerLabel : `${providerLabel}, no key yet`;
   $("autoScreenToggle").setAttribute("aria-checked", String(!!state.autoScreen));
+  $("openAtLoginToggle").setAttribute("aria-checked", String(!!state.openAtLogin));
   for (const b of $("theme").querySelectorAll("button")) b.setAttribute("aria-checked", String(b.dataset.value === state.theme));
   // One engine: Parakeet, on this Mac. Only the download and an engine
   // that won't start get a line here.
@@ -1447,6 +1448,7 @@ $("compactToggle").addEventListener("click", () => {
   g.setSetting("compactAnswers", !state.compactAnswers);
 });
 $("autoScreenToggle").addEventListener("click", () => g.setSetting("autoScreen", !state.autoScreen));
+$("openAtLoginToggle").addEventListener("click", () => g.setSetting("openAtLogin", !state.openAtLogin));
 // Click: screenshot and answer. Shift-click: add to the tray without asking yet.
 $("shotBtn").addEventListener("click", (e) => (e.shiftKey ? g.addShot() : snapSubmit()));
 $("shots").addEventListener("click", (e) => {

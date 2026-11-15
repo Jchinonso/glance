@@ -63,7 +63,7 @@ const PREWARM_CHECK_MS = 10 * 60 * 1000;
 
 // provider: which LLM answers (see providers.js). model is the Anthropic model;
 // an OpenAI-compatible server uses openaiBaseUrl and openaiModel instead.
-const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openaiBaseUrl: "https://api.openai.com/v1", openaiModel: "", effort: "low", invisible: true, autoScreen: true, style: "interview", theme: "system", customInstructions: "", compressedInstructions: "", shortcuts: null, vocabulary: "", resume: "", jobDescription: "",
+const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openaiBaseUrl: "https://api.openai.com/v1", openaiModel: "", effort: "low", invisible: true, autoScreen: true, openAtLogin: false, style: "interview", theme: "system", customInstructions: "", compressedInstructions: "", shortcuts: null, vocabulary: "", resume: "", jobDescription: "",
   // Setup: onboarded once the welcome and setup steps are done or skipped.
   // Your details go with every question like the resume. jdCheckedAt: when the
   // job description was last confirmed for an interview (ms; 0 = ask again).
@@ -533,6 +533,7 @@ function state() {
     autoScreen: config.autoScreen,
     compactAnswers: config.compactAnswers,
     autoAnswer: config.autoAnswer,
+    openAtLogin: config.openAtLogin,
     shots: shots.map(({ id, thumb }) => ({ id, thumb })),
     hasKey: canAsk(),
     keyHint: apiKey() ? apiKey().slice(-4) : null,
@@ -663,7 +664,7 @@ function createWindow() {
     if (TEST_DIR) {
       win.setOpacity(0);
       win.showInactive();
-    } else win.show();
+    } else if (!app.getLoginItemSettings().wasOpenedAsHidden) win.show();
   });
 }
 
@@ -1418,7 +1419,14 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   else if (name === "autoScreen") config.autoScreen = !!value;
   else if (name === "compactAnswers") config.compactAnswers = !!value;
   else if (name === "autoAnswer") config.autoAnswer = !!value;
-  else if (name === "style" && ["brief", "natural", "interview", "exam"].includes(value)) config.style = value;
+  else if (name === "openAtLogin") {
+    config.openAtLogin = !!value;
+    app.setLoginItemSettings({ openAtLogin: config.openAtLogin, openAsHidden: true });
+  }
+  else if (name === "style" && ["brief", "natural", "interview", "exam"].includes(value)) {
+    config.style = value;
+    if (value === "exam" && listening) toggleListening();
+  }
   else if (name === "theme" && ["system", "light", "dark"].includes(value)) {
     config.theme = value;
     nativeTheme.themeSource = value;
@@ -1534,6 +1542,7 @@ app.on("activate", () => windowReady && showWindow());
 app.whenReady().then(() => {
   log("start", app.getVersion(), "screen status:", systemPreferences.getMediaAccessStatus("screen"));
   loadConfig();
+  app.setLoginItemSettings({ openAtLogin: config.openAtLogin, openAsHidden: true });
   applyInvisible(); // the Dock icon, without waiting for the window to load
   setAppMenu();
   setUpSpeech();
