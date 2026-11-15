@@ -554,6 +554,15 @@ function broadcastState() {
 // Hidden from screen sharing also means out of the Dock and the app
 // switcher, which a full-screen share would show. Visible: Glance gets a
 // Dock icon like any app. (The UI tests leave the Dock alone.)
+//
+// Hardening: macOS can silently reset a window's NSWindowSharingType on
+// workspace switches, display changes, and Dock policy flips. Re-assert
+// setContentProtection periodically and on every focus/display event while
+// the overlay is hidden, so proctors never catch a gap.
+let protectionTimer = null;
+function reAssertProtection() {
+  if (config.invisible) win?.setContentProtection(true);
+}
 function applyInvisible() {
   win?.setContentProtection(config.invisible);
   if (TEST_DIR || !app.dock) return;
@@ -563,8 +572,11 @@ function applyInvisible() {
     // re-evaluates every window and can silently reset its sharing type,
     // putting the overlay back into screen shares. Re-assert after.
     win?.setContentProtection(true);
+    // Pulse every 2 s to cover any gap the one-shot re-assert misses.
+    if (!protectionTimer) protectionTimer = setInterval(reAssertProtection, 2000);
   } else {
     app.dock.show().catch(() => {});
+    if (protectionTimer) { clearInterval(protectionTimer); protectionTimer = null; }
   }
 }
 
@@ -724,6 +736,7 @@ function createTray() {
         { label: win?.isVisible() ? "Hide Glance" : "Show Glance", accelerator: shortcuts().toggleWindow, click: toggleWindow },
         { label: listening ? "Stop listening" : "Start listening", accelerator: shortcuts().listen, enabled: !setupActive, click: toggleListening },
         { label: "Screenshot and answer", accelerator: shortcuts().snap, enabled: !setupActive, click: () => { showWindow(); send("snap-submit"); } },
+        { label: "Exam: solve question", accelerator: shortcuts().examSolve, enabled: !setupActive, click: () => examSolveAction() },
         { label: "Save notes", enabled: !savingNotes, click: saveNotes },
         { type: "separator" },
         { label: "Quit Glance", role: "quit" },
@@ -791,7 +804,7 @@ async function captureScreen() {
 // when Depth is Quick. gated: auto-answer's end-of-turn check on what the
 // interviewer said when no question was recognised; the model replies <none>
 // when there's nothing to answer, and then nothing is shown (see GATE_CHARS).
-async function runAsk(question, { heard = false, heardAt = null, hard = false, deep = false, gated = false } = {}) {
+async function runAsk(question, { heard = false, heardAt = null, hard = false, deep = false, gated = false, styleOverride = null } = {}) {
   const startedAt = Date.now();
   if (current) current.abort();
   if (!canAsk()) {
@@ -871,11 +884,11 @@ async function runAsk(question, { heard = false, heardAt = null, hard = false, d
     model,
     question: q,
     transcript: transcript.slice(-TRANSCRIPT_LIMIT),
-    previous: answers.slice(config.style === "interview" ? -INTERVIEW_PREVIOUS_LIMIT : -PREVIOUS_LIMIT),
+    previous: answers.slice((styleOverride ?? config.style) === "interview" ? -INTERVIEW_PREVIOUS_LIMIT : -PREVIOUS_LIMIT),
     screenshots,
     effort,
     think,
-    style: config.style,
+    style: styleOverride ?? config.style,
     customInstructions: sentInstructions(),
     resume: config.resume,
     jobDescription: config.jobDescription,
@@ -961,6 +974,17 @@ async function addShot() {
 // Screenshot now and answer it, along with anything already in the tray.
 async function snapAndAsk(question) {
   if (shots.length >= MAX_SHOTS || (await addShot())) await runAsk(question);
+}
+
+// Exam mode: capture the screen and answer the visible question directly.
+// Always uses the exam style regardless of the current mode setting, so the
+// hotkey works even if the user forgot to switch modes. The window is shown
+// briefly for the answer, then stays up — the user dismisses it.
+async function examSolveAction() {
+  if (setupActive) return;
+  if (!win?.isVisible()) win?.show();
+  send("exam-solve-start");
+  if (shots.length >= MAX_SHOTS || (await addShot())) await runAsk("", { styleOverride: "exam" });
 }
 
 // Compress custom instructions once when they're saved, so every question
@@ -1168,6 +1192,7 @@ const DEFAULT_SHORTCUTS = {
   listen: "CommandOrControl+Shift+\\",
   snap: "CommandOrControl+Shift+2",
   addShot: "CommandOrControl+Shift+1",
+  examSolve: "CommandOrControl+Shift+E",
   invisible: "CommandOrControl+Shift+H",
 };
 
@@ -1191,6 +1216,7 @@ const SHORTCUT_ACTIONS = {
     if (!win?.isVisible()) showWindow();
     addShot();
   },
+  examSolve: () => examSolveAction(),
   // Works from any app, so say what changed: a stray press shouldn't leave
   // Glance visible in a screen share unnoticed.
   invisible: () => {
@@ -1392,7 +1418,7 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   else if (name === "autoScreen") config.autoScreen = !!value;
   else if (name === "compactAnswers") config.compactAnswers = !!value;
   else if (name === "autoAnswer") config.autoAnswer = !!value;
-  else if (name === "style" && ["brief", "natural", "interview"].includes(value)) config.style = value;
+  else if (name === "style" && ["brief", "natural", "interview", "exam"].includes(value)) config.style = value;
   else if (name === "theme" && ["system", "light", "dark"].includes(value)) {
     config.theme = value;
     nativeTheme.themeSource = value;
@@ -1517,6 +1543,10 @@ app.whenReady().then(() => {
   listener ??= createListener();
   screen.on("display-removed", keepOnScreen);
   screen.on("display-metrics-changed", keepOnScreen);
+  screen.on("display-added", () => { keepOnScreen(); reAssertProtection(); });
+  // Re-assert content protection whenever the window gains focus or a display
+  // change could have caused macOS to silently reset the sharing type.
+  app.on("browser-window-focus", reAssertProtection);
   // Instructions saved before auto-compression existed: compress them once now.
   if (config.customInstructions.length >= MIN_COMPRESS_CHARS && !config.compressedInstructions) {
     compressSavedInstructions(config.customInstructions);

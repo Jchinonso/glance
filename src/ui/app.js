@@ -35,13 +35,17 @@ let settingsTab = (() => {
 const STYLE_HINTS = {
   natural: "Natural: complete answers in plain, friendly prose.",
   brief: "Brief: short answers with only what matters.",
+  exam: "Exam: direct answers for MCQ, fill-in and calculations.",
 };
 // Interview mode is the "interview" style. The meeting style is the one used
 // outside it, remembered while Interview mode is on.
 function meetingStyle() {
-  if (state.style !== "interview") return state.style === "natural" ? "natural" : "brief";
+  if (state.style === "natural" || state.style === "brief") return state.style;
   try {
-    return localStorage.getItem("glance.styleBeforeInterview") === "natural" ? "natural" : "brief";
+    // glance.meetingStyle is set when entering exam from a meeting mode; fall
+    // back to styleBeforeInterview for interview mode and legacy sessions.
+    const saved = localStorage.getItem("glance.meetingStyle") || localStorage.getItem("glance.styleBeforeInterview");
+    return saved === "natural" ? "natural" : "brief";
   } catch {
     return "brief";
   }
@@ -59,6 +63,7 @@ const SHORTCUT_LABELS = {
   listen: "Start or stop listening",
   toggleWindow: "Show or hide Glance",
   addShot: "Add a screenshot without asking",
+  examSolve: "Exam: capture and solve the visible question",
   invisible: "Hide from screen sharing",
 };
 const KEY_SYMBOLS = { CommandOrControl: "⌘", Command: "⌘", Cmd: "⌘", Control: "⌃", Ctrl: "⌃", Alt: "⌥", Option: "⌥", Shift: "⇧", Enter: "↵", Return: "↵", Up: "↑", Down: "↓", Left: "←", Right: "→", Space: "Space", Backspace: "⌫", Tab: "⇥" };
@@ -174,10 +179,10 @@ function renderMenu() {
   for (const t of document.querySelectorAll("#menu .tab")) t.hidden = t.dataset.tab !== settingsTab;
   $("aboutVersion").textContent = `Version ${state.version} · ${state.arch === "arm64" ? "Apple Silicon" : "Intel"}`;
   renderAboutUpdate();
-  $("styleHint").textContent = `${STYLE_HINTS[meetingStyle()]}${state.style === "interview" ? " Used when you switch back to Meeting." : ""}`;
+  $("styleHint").textContent = `${STYLE_HINTS[meetingStyle()]}${state.style === "interview" || state.style === "exam" ? " Used when you switch back to Meeting." : ""}`;
   const interview = state.style === "interview";
   $("interviewToggle").setAttribute("aria-checked", String(interview));
-  $("interviewOffNote").hidden = interview;
+  $("interviewOffNote").hidden = interview || state.style === "exam";
   $("cloakWarn").hidden = !!state.invisible;
   const openai = state.provider === "openai";
   $("effortRow").hidden = state.effortSupported === false; // Claude models without effort
@@ -388,11 +393,21 @@ function renderStage() {
 
   // Which mode answers are in, always visible: Interview answers as you.
   const interview = state.style === "interview";
+  const exam = state.style === "exam";
   $("modePick").classList.toggle("interview", interview);
-  $("modeLabel").textContent = interview ? "Interview" : "Meeting";
-  $("modeBtn").title = `Answer mode: ${interview ? "Interview" : "Meeting"}. Click to change.`;
+  $("modePick").classList.toggle("exam", exam);
+  $("modeLabel").textContent = interview ? "Interview" : exam ? "Exam" : "Meeting";
+  $("modeBtn").title = `Answer mode: ${interview ? "Interview" : exam ? "Exam" : "Meeting"}. Click to change.`;
   $("modeMeetingHint").textContent = `${meetingStyle() === "natural" ? "Natural" : "Brief"} answers about the call and your screen`;
-  for (const b of $("modeMenu").querySelectorAll("button")) b.setAttribute("aria-checked", String((b.dataset.value === "interview") === interview));
+  for (const b of $("modeMenu").querySelectorAll("button")) {
+    const v = b.dataset.value;
+    b.setAttribute("aria-checked", String(
+      v === "interview" ? interview :
+      v === "exam" ? exam :
+      v === "meeting" ? !interview && !exam :
+      false
+    ));
+  }
 
   renderAskBtn();
 }
@@ -769,6 +784,10 @@ g.on("state", (s) => {
     stopTurnWatch();
   }
   wasListening = !!s.listening;
+  // Hide any visible tooltip when invisibility turns on: the tooltip element
+  // lives in the page (not a native OS window, so it won't leak into shares),
+  // but it looks odd if one stays pinned while the overlay hides from sharing.
+  if (s.invisible && !before.invisible) window.dispatchEvent(new Event("blur"));
   // Interview mode just lost its resume (switched on without one, or the
   // resume was cleared): setup opens at the resume step until one is added.
   const hadResumeOrOtherMode = before.style && (before.style !== "interview" || !!before.resume?.trim());
@@ -820,6 +839,7 @@ g.on("transcript", onTranscript);
 g.on("focus-input", () => $("question").focus());
 g.on("submit", submit);
 g.on("snap-submit", snapSubmit);
+g.on("exam-solve-start", () => showNotice({ level: "ok", text: "Capturing exam question…" }));
 
 // gated: a turn-end check that turned out to have something to answer.
 g.on("answer-start", ({ id, question, gated }) => {
@@ -1412,9 +1432,10 @@ $("vocabularyInput").addEventListener("keydown", (e) => {
 $("style").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (!v) return;
-  if (state.style !== "interview") return g.setSetting("style", v);
+  if (state.style !== "interview" && state.style !== "exam") return g.setSetting("style", v);
   try {
     localStorage.setItem("glance.styleBeforeInterview", v);
+    localStorage.setItem("glance.meetingStyle", v);
   } catch {}
   render();
 });
@@ -1631,7 +1652,20 @@ $("modeMenu").addEventListener("click", (e) => {
   const v = e.target.closest("button")?.dataset.value;
   if (!v) return;
   setModeMenu(false);
-  if ((v === "interview") !== (state.style === "interview")) toggleInterview();
+  if (v === "interview") {
+    if (state.style !== "interview") toggleInterview();
+  } else if (v === "exam") {
+    if (state.style !== "exam") {
+      if (state.style === "brief" || state.style === "natural") {
+        try { localStorage.setItem("glance.meetingStyle", state.style); } catch {}
+      }
+      g.setSetting("style", "exam");
+    }
+  } else if (v === "meeting") {
+    if (state.style !== "brief" && state.style !== "natural") {
+      g.setSetting("style", meetingStyle());
+    }
+  }
 });
 document.addEventListener("click", (e) => {
   if (!$("modeMenu").hidden && !e.target.closest("#modePick")) setModeMenu(false);

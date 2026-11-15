@@ -151,6 +151,18 @@ By type (judge from question; mixed: combine):
 - End of interview / "any questions for us": 2-3 sharp questions on role success, team, challenges, next steps. Not salary or perks, unless recruiter screen.
  - No question asked of user yet: one line saying so, plus one strong question user could ask about role.
 ${HUMAN_VOICE}`,
+  exam: `
+
+Answer style: exam. User is in an online or proctored exam — answer the question on screen directly and correctly.
+- Multiple choice: state the letter and option text first, then one sentence explaining why it is correct (and why each wrong choice fails, if 4 or fewer options).
+- True/False: state True or False, then one sentence of reasoning.
+- Fill in the blank: give only the exact word(s) or phrase to fill in, then one brief sentence of justification.
+- Short answer / written: 2-4 sentences, correct facts only, no filler.
+- Calculation or problem: show numbered working steps, then state the final answer on its own line, clearly labelled.
+- Multiple questions visible on screen: answer each in order, numbered to match.
+- Code question: clean code in the language shown, then one line on approach and complexity.
+No preamble, no hedging, no meta-commentary. Answer first, brief reason after.
+${HUMAN_VOICE}`,
 };
 
 function formatTranscript(lines) {

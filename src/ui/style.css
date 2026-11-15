@@ -799,6 +799,7 @@ body.needs-key #listenBtn, body.needs-key #shotBtn { display: none; }
 .modepick-btn:hover, .modepick-btn[aria-expanded="true"] { background: var(--raise-hover); color: var(--text); }
 .modepick-btn svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
 .modepick.interview .modepick-btn { background: rgba(185, 163, 255, 0.2); color: var(--violet); }
+.modepick.exam .modepick-btn { background: rgba(255, 190, 90, 0.18); color: var(--caution); }
 .modemenu { position: absolute; bottom: calc(100% + 6px); left: 0; z-index: 10; width: 250px; padding: 4px; border-radius: 12px; background: var(--menu); border: 1px solid var(--edge); box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35); display: flex; flex-direction: column; }
 .modemenu[hidden] { display: none; }
 .modemenu button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 7px 10px 7px 26px; border-radius: 8px; text-align: left; color: var(--text); position: relative; }
