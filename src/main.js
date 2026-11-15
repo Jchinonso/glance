@@ -246,13 +246,13 @@ function setUpSpeech({ retry = true } = {}) {
 
 // usage is a provider's normalized { input, output, cacheRead, cacheWrite }.
 // Cost is null when the provider has no price list (OpenAI-compatible).
-// Updates: Glance looks for a newer release when it opens and once a day
+// Updates: Glance looks for a newer release when it opens and every hour
 // (again in half an hour when the check couldn't reach GitHub). The next
 // check is a time of day, looked at every few minutes: a single long timer
 // stops counting while the Mac sleeps.
 // Update downloads the DMG, checks it, swaps the app and reopens.
 // status: none | available | downloading | installing | error
-const UPDATE_CHECK_MS = 24 * 60 * 60 * 1000;
+const UPDATE_CHECK_MS = 60 * 60 * 1000;
 const UPDATE_RETRY_MS = 30 * 60 * 1000;
 const UPDATE_TICK_MS = 10 * 60 * 1000;
 let nextUpdateCheckAt = 0;

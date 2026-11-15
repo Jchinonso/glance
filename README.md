@@ -82,7 +82,7 @@ curl -fsSL https://raw.githubusercontent.com/Jchinonso/glance/main/install.sh | 
 
 It picks the build for your Mac, checks the download against the release's SHA-256, and copies Glance into Applications.
 
-**Updates.** Glance looks for a newer release when it opens and once a day (or when you press **Settings › About › Check for updates**). When there is one, a bar appears under the top bar: press **Update** and Glance downloads it, checks it against the release's SHA-256, replaces itself and reopens. Updating restarts Glance, which clears the current transcript and answers, so save notes first if you're mid-call (the bar reminds you). **Later** hides the bar until Glance next opens. The bar stays hidden while Listen is on. If Glance can't replace itself (it's running from the DMG, for example), Update opens the download page instead.
+**Updates.** Glance looks for a newer release when it opens and every hour (or when you press **Settings › About › Check for updates**). When there is one, a bar appears under the top bar: press **Update** and Glance downloads it, checks it against the release's SHA-256, replaces itself and reopens. Updating restarts Glance, which clears the current transcript and answers, so save notes first if you're mid-call (the bar reminds you). **Later** hides the bar until Glance next opens. The bar stays hidden while Listen is on. If Glance can't replace itself (it's running from the DMG, for example), Update opens the download page instead.
 
 Nothing else to install: the speech engine ([sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx), on the CPU) is inside the app.
 
@@ -362,7 +362,7 @@ Depth is sent as the reasoning level: `reasoning_effort`, or `reasoning.effort` 
 - **The microphone is never recorded.** Glance hears only the Mac's audio, the other side of the call.
 - **Keys** are stored in the macOS login keychain, not in files.
 - **Where things live.** Settings are in `~/Library/Application Support/Glance/config.json`, the downloaded **speech model** in `~/Library/Application Support/Glance/models`, **logs** in `~/Library/Logs/Glance/glance.log`, **notes** in `~/Documents/Glance/`.
-- **Update checks.** When it opens and once a day, Glance asks GitHub for the latest release of this repository. The request carries nothing about you or your calls; like any web request, GitHub sees your IP address. Nothing is downloaded until you press **Update**.
+- **Update checks.** When it opens and every hour, Glance asks GitHub for the latest release of this repository. The request carries nothing about you or your calls; like any web request, GitHub sees your IP address. Nothing is downloaded until you press **Update**.
 - Glance treats the transcript, screen text, résumé and job description as data, not instructions.
 - **Settings › General › Delete all Glance data** removes all of the above in one step (see [Uninstall](#uninstall)).
 

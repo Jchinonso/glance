@@ -499,7 +499,7 @@ function renderAboutUpdate() {
     u.status === "error" ? `${u.error} Click to try again.`
     : ready ? `Downloads it, installs it and reopens Glance.${updateSessionNote()}`
     : active ? updateStatusText(u)
-    : UPDATE_CHECK_TEXT[updateCheckResult] || "Glance also checks by itself when it opens and once a day.";
+    : UPDATE_CHECK_TEXT[updateCheckResult] || "Glance also checks by itself when it opens and every hour.";
 }
 $("updateBtn").addEventListener("click", () => g.installUpdate());
 $("updatePage").addEventListener("click", () => g.openUpdatePage());
