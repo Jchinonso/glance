@@ -63,7 +63,7 @@ const PREWARM_CHECK_MS = 10 * 60 * 1000;
 
 // provider: which LLM answers (see providers.js). model is the Anthropic model;
 // an OpenAI-compatible server uses openaiBaseUrl and openaiModel instead.
-const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openaiBaseUrl: "https://api.openai.com/v1", openaiModel: "", effort: "low", invisible: true, autoScreen: true, openAtLogin: false, style: "interview", theme: "system", customInstructions: "", compressedInstructions: "", shortcuts: null, vocabulary: "", resume: "", jobDescription: "",
+const defaults = { provider: "anthropic", model: DEFAULT_ANTHROPIC_MODEL, openaiBaseUrl: "https://api.openai.com/v1", openaiModel: "", effort: "low", invisible: true, autoScreen: true, openAtLogin: true, style: "interview", theme: "system", customInstructions: "", compressedInstructions: "", shortcuts: null, vocabulary: "", resume: "", jobDescription: "",
   // Setup: onboarded once the welcome and setup steps are done or skipped.
   // Your details go with every question like the resume. jdCheckedAt: when the
   // job description was last confirmed for an interview (ms; 0 = ask again).
