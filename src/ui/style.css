@@ -855,3 +855,28 @@ label.check input { width: 15px; height: 15px; accent-color: var(--alert); }
 
 /* A main button that can't be used yet (e.g. setup's Next before a resume). */
 .primary:disabled { opacity: 0.4; cursor: default; filter: none; }
+
+/* In-page tooltips. Native `title` tooltips render in a separate OS window
+   that content protection doesn't cover, so they would show in a screen
+   share while the overlay is hidden. tooltip.js moves every title here. */
+#tt {
+  position: fixed;
+  z-index: 2147483647;
+  max-width: 260px;
+  padding: 5px 8px;
+  border-radius: 7px;
+  background: rgba(20, 20, 22, 0.96);
+  color: #fff;
+  font-size: 11.5px;
+  line-height: 1.35;
+  white-space: normal;
+  pointer-events: none;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.35);
+  opacity: 0;
+  visibility: hidden;
+  transition: opacity 90ms ease;
+}
+#tt.show {
+  opacity: 1;
+  visibility: visible;
+}

@@ -557,8 +557,15 @@ function broadcastState() {
 function applyInvisible() {
   win?.setContentProtection(config.invisible);
   if (TEST_DIR || !app.dock) return;
-  if (config.invisible) app.dock.hide();
-  else app.dock.show().catch(() => {});
+  if (config.invisible) {
+    app.dock.hide();
+    // Hiding the Dock flips the app's activation policy, and macOS then
+    // re-evaluates every window and can silently reset its sharing type,
+    // putting the overlay back into screen shares. Re-assert after.
+    win?.setContentProtection(true);
+  } else {
+    app.dock.show().catch(() => {});
+  }
 }
 
 // The menu bar macOS shows while Glance has a Dock icon. Electron's stock
@@ -655,11 +662,14 @@ function showWindow() {
 }
 
 // With no dock icon, a hidden window is easy to lose. The first time, say how
-// to bring it back.
+// to bring it back. Skip it while hiding from screen sharing is on: a native
+// notification renders in a separate window that content protection can't
+// cover, so it would surface in a share. The tip still shows later, once, when
+// invisibility is off. The in-window notice on the invisibility toggle stays.
 function hideWindow() {
   if (!win) return;
   win.hide();
-  if (!config.hideTipShown && Notification.isSupported()) {
+  if (!config.hideTipShown && !config.invisible && Notification.isSupported()) {
     new Notification({ title: "Glance is hidden", body: `Click the Glance icon in the menu bar, or press ${formatAccel(shortcuts().toggleWindow)}, to bring it back.` }).show();
     config.hideTipShown = true;
     saveConfig();
@@ -705,7 +715,8 @@ function trayIcon() {
 let tray = null;
 function createTray() {
   tray = new Tray(trayIcon());
-  tray.setToolTip(`Glance (${formatAccel(shortcuts().toggleWindow)} to show or hide)`);
+  // No tray tooltip: macOS draws it in a separate window that content
+  // protection does not cover, so it would show in a full-screen share.
   tray.on("click", toggleWindow);
   tray.on("right-click", () => {
     tray.popUpContextMenu(
@@ -1217,7 +1228,6 @@ function registerShortcuts() {
   const moves = { Up: [0, -80], Down: [0, 80], Left: [-80, 0], Right: [80, 0] };
   for (const [key, [dx, dy]] of Object.entries(moves)) globalShortcut.register(`CommandOrControl+${key}`, () => moveBy(dx, dy));
   if (failed.length) log("shortcuts not registered:", failed.join(", "));
-  tray?.setToolTip(`Glance (${formatAccel(shortcuts().toggleWindow)} to show or hide)`);
   return failed;
 }
 

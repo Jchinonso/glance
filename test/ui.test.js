@@ -1162,7 +1162,7 @@ test("the top bar's X asks before quitting during a call", { skip }, async () =>
   await run(`state.listening = true; render();`);
   await click("#quitTopBtn");
   assert.match(await run(`return $("notice").hidden ? "" : $("notice").textContent;`), /listening to your call\. Click the X again to quit/);
-  assert.equal(await run(`return $("quitTopBtn").classList.contains("armed") + "|" + $("quitTopBtn").title;`), "true|Click again to quit Glance");
+  assert.equal(await run(`return $("quitTopBtn").classList.contains("armed") + "|" + $("quitTopBtn").getAttribute("data-tt");`), "true|Click again to quit Glance");
   await run(`state.listening = false; render();`);
 });
 
