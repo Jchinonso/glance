@@ -664,7 +664,7 @@ function createWindow() {
     if (TEST_DIR) {
       win.setOpacity(0);
       win.showInactive();
-    } else if (!app.getLoginItemSettings().wasOpenedAsHidden) win.show();
+    } else win.show();
   });
 }
 
@@ -1421,7 +1421,7 @@ ipcMain.handle("set-setting", (_e, name, value) => {
   else if (name === "autoAnswer") config.autoAnswer = !!value;
   else if (name === "openAtLogin") {
     config.openAtLogin = !!value;
-    app.setLoginItemSettings({ openAtLogin: config.openAtLogin, openAsHidden: true });
+    app.setLoginItemSettings({ openAtLogin: config.openAtLogin });
   }
   else if (name === "style" && ["brief", "natural", "interview", "exam"].includes(value)) {
     config.style = value;
@@ -1542,7 +1542,7 @@ app.on("activate", () => windowReady && showWindow());
 app.whenReady().then(() => {
   log("start", app.getVersion(), "screen status:", systemPreferences.getMediaAccessStatus("screen"));
   loadConfig();
-  app.setLoginItemSettings({ openAtLogin: config.openAtLogin, openAsHidden: true });
+  app.setLoginItemSettings({ openAtLogin: config.openAtLogin });
   applyInvisible(); // the Dock icon, without waiting for the window to load
   setAppMenu();
   setUpSpeech();
