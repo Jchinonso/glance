@@ -111,7 +111,7 @@ test("a gated ask adds the turn check to the user message and leaves the system 
   const text = gated.parts.at(-1).text;
   assert.ok(text.endsWith(GATE), text);
   assert.match(GATE, /reply exactly <none> and nothing else/);
-  assert.match(text, /Interviewer's latest turn: Hi, I'm Abby/);
+  assert.match(text, /Other side's latest turn: Hi, I'm Abby/);
   assert.ok(!plain.parts.at(-1).text.includes("<none>"));
   assert.ok(!plain.parts.at(-1).text.includes(GATE));
   assert.match(plain.parts.at(-1).text, /Question: Hi, I'm Abby/);

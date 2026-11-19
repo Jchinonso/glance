@@ -89,7 +89,7 @@ before(async () => {
       res.writeHead(200, { "content-type": "text/event-stream" });
       // Auto-answer's turn-end check on an introduction: nothing to answer.
       const asked = request.messages?.[1]?.content?.at(-1)?.text ?? "";
-      if (asked.includes("reply exactly <none>") && /Interviewer's latest turn: [^\n]*\bwelcome\b/i.test(asked)) {
+      if (asked.includes("reply exactly <none>") && /Other side's latest turn: [^\n]*\bwelcome\b/i.test(asked)) {
         for (const piece of ["<no", "ne>"]) res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: piece } }] })}\n\n`);
         res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: "stop" }] })}\n\ndata: [DONE]\n\n`);
         return res.end();
@@ -550,7 +550,7 @@ test("auto-answer: a heard question is answered once they finish, not before", {
   assert.deepEqual(await run(`const a = answers.at(-1); return [a.question, a.auto];`), ["Can you tell me about a time when you led a project under pressure?", true]);
 });
 
-test("auto-answer waits while you type, and stays off in Meeting mode", { skip }, async () => {
+test("auto-answer waits while you type, and fires in Meeting mode too", { skip }, async () => {
   const now = Date.now();
   const count = await run(`return answers.length;`);
   await run(`
@@ -570,13 +570,13 @@ test("auto-answer waits while you type, and stays off in Meeting mode", { skip }
   await click("#modeBtn");
   await click('#modeMenu [data-value="meeting"]');
   await until(`state.style !== "interview"`);
-  await run(`state.listening = true; onTranscript({ role: "them", text: "What's the plan for next quarter?", start: ${now + 9000}, at: ${now + 10500} });`);
-  await sleep(1200);
-  assert.equal(await run(`return answers.length;`), count + 1, "no auto-answer outside Interview mode");
+  await run(`turn = null; state.listening = true; onTranscript({ role: "them", text: "What's the plan for next quarter?", start: ${now + 9000}, at: ${now + 10500} });`);
+  await until(`answers.length === ${count + 2} && answers.at(-1).status === "done"`, 5000);
+  assert.equal(await run(`return answers.at(-1).question;`), "What's the plan for next quarter?", "auto-answer fires in Meeting mode");
   await click("#modeBtn");
   await click('#modeMenu [data-value="interview"]');
   await until(`state.style === "interview"`);
-  await run(`pendingQuestion = null; stillHearing = async () => false; if (!document.getElementById("jdCard").hidden) document.getElementById("jdSame").click();`);
+  await run(`turn = null; pendingQuestion = null; lastAutoQuestion = null; autoAnswerId = null; stillHearing = async () => false; if (!document.getElementById("jdCard").hidden) document.getElementById("jdSame").click();`);
 });
 
 test("auto-answer fires with the transcript view open", { skip }, async () => {
@@ -585,6 +585,7 @@ test("auto-answer fires with the transcript view open", { skip }, async () => {
   await run(`
     stillHearing = async () => false;
     pendingQuestion = null;
+    turn = null;
     state.listening = true;
     document.getElementById("question").value = "";
     questionTypedAt = 0;
@@ -828,7 +829,7 @@ test("Interview mode without a resume reopens setup; auto-answer says it needs I
   await run(`await g.setSetting("resume", ""); await g.setSetting("jdCheckedAt", 0); await g.setSetting("style", "brief");`);
   await until(`state.style === "brief" && !state.resume`);
   await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
-  assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /Only works in Interview mode/);
+  assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /as soon as the other side finishes/);
   await run(`setMenu(false);`);
   await click("#modeBtn");
   await click('#modeMenu [data-value="interview"]');
@@ -848,7 +849,7 @@ test("Interview mode without a resume reopens setup; auto-answer says it needs I
   await until(`!!state.resume`);
   await run(`finishOnboarding();`);
   await run(`setMenu(true); document.querySelector('#settingsTabs [data-tab="interview"]').click();`);
-  assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /as soon as the interviewer finishes/);
+  assert.match(await run(`return document.getElementById("autoAnswerHint").textContent;`), /as soon as the other side finishes/);
   await run(`setMenu(false);`);
 });
 

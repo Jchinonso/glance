@@ -191,9 +191,9 @@ function renderMenu() {
   $("cloakToggle").setAttribute("aria-checked", String(!!state.invisible));
   $("compactToggle").setAttribute("aria-checked", String(!!state.compactAnswers));
   $("autoAnswerToggle").setAttribute("aria-checked", String(!!state.autoAnswer));
-  $("autoAnswerHint").textContent = state.style === "interview"
-    ? "While listening, starts the answer as soon as the interviewer finishes a question, so you don't have to press Answer."
-    : "Only works in Interview mode, which is off. Switch with the menu beside the question box.";
+  $("autoAnswerHint").textContent = state.style === "exam"
+    ? "Not available in Exam mode (mic is off)."
+    : "While listening, starts the answer as soon as the other side finishes speaking, so you don't have to press Answer.";
   const sp = state.spend || { input: 0, output: 0, dollars: 0 };
   $("spendTotal").textContent = sp.dollars ? `about ${formatDollars(sp.dollars)}` : "";
   $("spendMeta").textContent = sp.dollars
@@ -648,7 +648,7 @@ function thinkHarder(a) {
   g.ask(a.question, { heard: true, deep: true });
 }
 
-// Auto-answer (Interview mode, listening, Settings > Interview): once a
+// Auto-answer (all modes except Exam, listening, Settings > Interview): once a
 // question is pending and the other side has gone quiet (speech over and
 // transcribed), answer it on the first 100 ms tick with no extra wait. It never
 // interrupts an answer you asked for or a question you're typing: text in the
@@ -663,7 +663,7 @@ let autoAnswerId = null; // the answer auto-answer started, while it streams
 // than expected and then carry on, the whole question is answered again.
 let lastAutoQuestion = null;
 // No key: the listen shortcut still works, but asking would only show an error.
-const autoAnswerOn = () => !!state.autoAnswer && state.style === "interview" && !!state.listening && !!state.hasKey && !onboarding;
+const autoAnswerOn = () => !!state.autoAnswer && state.style !== "exam" && !!state.listening && !!state.hasKey && !onboarding;
 function watchForQuestion() {
   if (autoTimer || !autoAnswerOn() || !pendingQuestion) return;
   let quietSince = null;
@@ -672,7 +672,7 @@ function watchForQuestion() {
     if (!autoAnswerOn() || !pendingQuestion || waitingForQuestion) return stopWatching();
     const typing = $("question").value.trim() && Date.now() - questionTypedAt < TYPING_HOLD_MS;
     if (own || typing || panel) return; // keep watching
-    if (await stillHearing()) return void (turnQuietSince = null);
+    if (await stillHearing()) return void (quietSince = null);
     quietSince ??= Date.now();
     if (Date.now() - quietSince < QUIET_MS) return;
     stopWatching();
@@ -693,7 +693,7 @@ function stopWatching() {
 }
 let autoAnswerPending = false; // the next answer-start is auto-answer's
 
-// Auto-answer at the end of the interviewer's turn, for what the rules above
+// Auto-answer at the end of the other side's turn, for what the rules above
 // don't recognise as a question ("My first question for you is, tell me about
 // yourself", "I'd love to hear about…"). A turn is the other side's lines since
 // the last answer started (or Listen started). Once they've gone quiet (same
@@ -742,7 +742,7 @@ function watchTurn() {
     const own = state.busy && autoAnswerId !== answers.at(-1)?.id;
     const typing = $("question").value.trim() && Date.now() - questionTypedAt < TYPING_HOLD_MS;
     if (own || typing || panel) return;
-    if (await stillHearing()) return void (quietSince = null);
+    if (await stillHearing()) return void (turnQuietSince = null);
     if (!turnOpen()) return stopTurnWatch(); // changed during the await
     turnQuietSince ??= Date.now();
     if (Date.now() - turnQuietSince < TURN_QUIET_MS) return;
@@ -1501,7 +1501,7 @@ const DOCS = {
   },
   jobDescription: {
     lead: "Job description",
-    hint: "The role you're interviewing for, used for questions about the role. Sent word for word. Answers match your experience to its requirements and use the company's name. Import a file or paste the posting.",
+    hint: "Role or position you're preparing for. Sent word for word. Answers match your experience to its requirements and use the company's name. Import a file or paste the posting.",
     placeholder: "Paste the job posting, or press Import file…",
   },
 };

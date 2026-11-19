@@ -562,7 +562,7 @@ function broadcastState() {
 // the overlay is hidden, so proctors never catch a gap.
 let protectionTimer = null;
 function reAssertProtection() {
-  if (config.invisible) win?.setContentProtection(true);
+  if (config.invisible && win && !win.isDestroyed()) win.setContentProtection(true);
 }
 function applyInvisible() {
   win?.setContentProtection(config.invisible);
@@ -573,8 +573,10 @@ function applyInvisible() {
     // re-evaluates every window and can silently reset its sharing type,
     // putting the overlay back into screen shares. Re-assert after.
     win?.setContentProtection(true);
-    // Pulse every 2 s to cover any gap the one-shot re-assert misses.
-    if (!protectionTimer) protectionTimer = setInterval(reAssertProtection, 2000);
+    // Pulse every 500 ms. macOS can silently reset NSWindowSharingNone on
+    // activation-policy changes, SCKit stream starts, and other system events;
+    // the tighter interval catches resets before the next screen-capture frame.
+    if (!protectionTimer) protectionTimer = setInterval(reAssertProtection, 500);
   } else {
     app.dock.show().catch(() => {});
     if (protectionTimer) { clearInterval(protectionTimer); protectionTimer = null; }
@@ -650,6 +652,9 @@ function createWindow() {
       saveConfig();
     }, 400);
   });
+  // showInactive() doesn't fire browser-window-focus, so re-assert protection
+  // immediately on every show regardless of how the window became visible.
+  win.on("show", reAssertProtection);
   // Light and dark need different native blur materials.
   nativeTheme.on("updated", () => win?.setVibrancy(nativeTheme.shouldUseDarkColors ? "hud" : "popover"));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
@@ -736,7 +741,7 @@ function createTray() {
       Menu.buildFromTemplate([
         { label: win?.isVisible() ? "Hide Glance" : "Show Glance", accelerator: shortcuts().toggleWindow, click: toggleWindow },
         { label: listening ? "Stop listening" : "Start listening", accelerator: shortcuts().listen, enabled: !setupActive, click: toggleListening },
-        { label: "Screenshot and answer", accelerator: shortcuts().snap, enabled: !setupActive, click: () => { showWindow(); send("snap-submit"); } },
+        { label: "Screenshot and answer", accelerator: shortcuts().snap, enabled: !setupActive, click: () => { if (!win?.isVisible()) win?.showInactive(); send("snap-submit"); } },
         { label: "Exam: solve question", accelerator: shortcuts().examSolve, enabled: !setupActive, click: () => examSolveAction() },
         { label: "Save notes", enabled: !savingNotes, click: saveNotes },
         { type: "separator" },
@@ -803,7 +808,7 @@ async function captureScreen() {
 // would only add tokens. hard: a heard question that needs thinking (design,
 // code, estimates…), answered at Depth. deep: Think harder, which thinks even
 // when Depth is Quick. gated: auto-answer's end-of-turn check on what the
-// interviewer said when no question was recognised; the model replies <none>
+// other side said when no question was recognised; the model replies <none>
 // when there's nothing to answer, and then nothing is shown (see GATE_CHARS).
 async function runAsk(question, { heard = false, heardAt = null, hard = false, deep = false, gated = false, styleOverride = null } = {}) {
   const startedAt = Date.now();
@@ -983,7 +988,7 @@ async function snapAndAsk(question) {
 // briefly for the answer, then stays up — the user dismisses it.
 async function examSolveAction() {
   if (setupActive) return;
-  if (!win?.isVisible()) win?.show();
+  if (!win?.isVisible()) win?.showInactive();
   send("exam-solve-start");
   if (shots.length >= MAX_SHOTS || (await addShot())) await runAsk("", { styleOverride: "exam" });
 }
@@ -1203,18 +1208,18 @@ let setupActive = false;
 const SHORTCUT_ACTIONS = {
   toggleWindow,
   ask: () => {
-    if (!win?.isVisible()) win?.show();
+    if (!win?.isVisible()) win?.showInactive();
     // Renderer submits whatever is typed (or nothing, for an auto answer).
     send("submit");
   },
   listen: () => setupActive || toggleListening(),
   snap: () => {
-    if (!win?.isVisible()) win?.show();
+    if (!win?.isVisible()) win?.showInactive();
     send("snap-submit");
   },
   addShot: () => {
     if (setupActive) return;
-    if (!win?.isVisible()) showWindow();
+    if (!win?.isVisible()) win?.showInactive();
     addShot();
   },
   examSolve: () => examSolveAction(),
@@ -1226,7 +1231,7 @@ const SHORTCUT_ACTIONS = {
     applyInvisible();
     broadcastState();
     const keys = formatAccel(shortcuts().invisible);
-    send("notice", config.invisible ? { level: "ok", text: `Hidden from screen sharing and the Dock (${keys}).` } : { level: "warn", text: `Glance is now visible in screen sharing and the Dock. Press ${keys} to hide it again.` });
+    send("notice", config.invisible ? { level: "ok", text: `Hidden from screen sharing and the Dock (${keys}). Note: dedicated screen recorders (e.g. TaskRecorder, OBS) may still capture Glance — use ${keys} to hide it before recording.` } : { level: "warn", text: `Glance is now visible in screen sharing and the Dock. Press ${keys} to hide it again.` });
   },
 };
 
@@ -1474,7 +1479,7 @@ ipcMain.handle("remove-shot", (_e, id) => {
   broadcastState();
 });
 ipcMain.handle("clear", () => {
-  // A cleared session is a new interview: ask about the job description again.
+  // Reset jdCheckedAt so the job description is confirmed again next session.
   config.jdCheckedAt = 0;
   saveConfig();
   transcript = [];
@@ -1550,12 +1555,13 @@ app.whenReady().then(() => {
   createTray();
   // The model loads as soon as it's verified (setSpeechReady), before the first Listen.
   listener ??= createListener();
-  screen.on("display-removed", keepOnScreen);
-  screen.on("display-metrics-changed", keepOnScreen);
+  screen.on("display-removed", () => { keepOnScreen(); reAssertProtection(); });
+  screen.on("display-metrics-changed", () => { keepOnScreen(); reAssertProtection(); });
   screen.on("display-added", () => { keepOnScreen(); reAssertProtection(); });
-  // Re-assert content protection whenever the window gains focus or a display
-  // change could have caused macOS to silently reset the sharing type.
+  // Re-assert on focus changes: macOS can reset sharing type when another app
+  // activates (e.g. when a screen recorder starts its SCKit stream).
   app.on("browser-window-focus", reAssertProtection);
+  app.on("browser-window-blur", reAssertProtection);
   // Instructions saved before auto-compression existed: compress them once now.
   if (config.customInstructions.length >= MIN_COMPRESS_CHARS && !config.compressedInstructions) {
     compressSavedInstructions(config.customInstructions);
